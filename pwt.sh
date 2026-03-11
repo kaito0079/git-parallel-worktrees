@@ -426,7 +426,7 @@ _pwt_cmd_add() {
     local project_root project_name work_base
     IFS=$'\t' read -r project_root project_name work_base <<< "$_ctx"
 
-    local branch="" base="HEAD"
+    local branch="" base=""
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --from)
@@ -455,9 +455,18 @@ _pwt_cmd_add() {
         return 1
     fi
 
+    # --from 省略時は現在の worktree の HEAD を基点にする（git worktree add と同じ挙動）
+    if [ -z "$base" ]; then
+        base="$(git rev-parse HEAD 2>/dev/null)" || {
+            echo "エラー: 現在の HEAD を解決できません" >&2
+            return 1
+        }
+    fi
+
     _pwt_validate_branch "$branch" || return 1
 
-    if [ "$base" != "HEAD" ]; then
+    # base のバリデーション（rev-parse 済みの SHA でなければチェック）
+    if ! [[ "$base" =~ ^[0-9a-fA-F]{40,64}$ ]]; then
         if [[ "$base" == -* ]]; then
             echo "エラー: --from の値が '-' で始まっています: $base" >&2
             return 1
