@@ -33,7 +33,7 @@ pwt init
 vim .worktreelinks
 
 # 3. 最初の worktree を作成
-pwt new feature/my-task
+pwt add feature/my-task
 ```
 
 ## シンボリックリンク（`.worktreelinks`）
@@ -50,7 +50,7 @@ docker-compose.override.yml
 .claude/settings.local.json
 ```
 
-- `pwt new` で worktree を作成すると自動的にシンボリックリンクが設定される
+- `pwt add` で worktree を作成すると自動的にシンボリックリンクが設定される
 - **各 worktree は独立した `.worktreelinks` のコピーを持つ** → worktree ごとに個別設定が可能
 - `.worktreelinks` をコミットすればチームで設定を共有できる
 
@@ -85,9 +85,9 @@ pwt unsync
 | `pwt <番号>` | 番号で worktree に移動 |
 | `pwt <名前>` | ブランチ名/ディレクトリ名の部分一致で移動 |
 | `pwt init` | `.worktreelinks` を生成 |
-| `pwt new <branch> [--from <base>]` | worktree を作成（ブランチ作成・symlink設定・cd まで自動） |
+| `pwt add <branch> [--from <base>]` | worktree を作成（ブランチ作成・symlink設定・cd まで自動） |
 | `pwt list` | worktree 一覧（明示的） |
-| `pwt rm <branch>` | worktree を削除 |
+| `pwt remove <branch>` | worktree を削除 |
 | `pwt sync` | カレント worktree のシンボリックリンクを再同期 |
 | `pwt unsync` | カレント worktree のシンボリックリンクを全削除 |
 | `pwt help` | ヘルプを表示 |

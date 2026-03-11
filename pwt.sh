@@ -12,9 +12,9 @@
 #   pwt                                 worktree 一覧（番号付き）
 #   pwt <番号|名前>                     worktree に移動
 #   pwt init                            .worktreelinks を生成
-#   pwt new <branch> [--from <b>]       worktree を作成して移動
+#   pwt add <branch> [--from <b>]       worktree を作成して移動
 #   pwt list                            worktree 一覧（明示的）
-#   pwt rm <branch>                     worktree を削除
+#   pwt remove <branch>                 worktree を削除
 #   pwt sync                            シンボリックリンクを再同期
 #   pwt unsync                          シンボリックリンクを全削除
 
@@ -322,10 +322,9 @@ pwt() {
     fi
 
     case "$first" in
-        new)     shift; _pwt_cmd_new     "$@"; return $? ;;
+        add)     shift; _pwt_cmd_add     "$@"; return $? ;;
         list)    shift; _pwt_cmd_list    "$@"; return $? ;;
-        rm)      shift; _pwt_cmd_rm      "$@"; return $? ;;
-        remove)  shift; _pwt_cmd_rm      "$@"; return $? ;;
+        remove)  shift; _pwt_cmd_remove  "$@"; return $? ;;
         sync)    shift; _pwt_cmd_sync    "$@"; return $? ;;
         unsync)  shift; _pwt_cmd_unsync  "$@"; return $? ;;
         init)    shift; _pwt_cmd_init    "$@"; return $? ;;
@@ -420,8 +419,8 @@ _pwt_cmd_navigate() {
 }
 
 # ----------------------------------------------------------------
-# new
-_pwt_cmd_new() {
+# add
+_pwt_cmd_add() {
     local _ctx
     _ctx="$(_pwt_resolve_context)" || return 1
     local project_root project_name work_base
@@ -434,7 +433,7 @@ _pwt_cmd_new() {
                 shift
                 if [ -z "${1:-}" ]; then
                     echo "エラー: --from には値が必要です" >&2
-                    echo "使い方: pwt new <branch> [--from <base>]" >&2
+                    echo "使い方: pwt add <branch> [--from <base>]" >&2
                     return 1
                 fi
                 base="$1"
@@ -442,7 +441,7 @@ _pwt_cmd_new() {
             *)
                 if [ -n "$branch" ]; then
                     echo "エラー: 余分な引数: $1" >&2
-                    echo "使い方: pwt new <branch> [--from <base>]" >&2
+                    echo "使い方: pwt add <branch> [--from <base>]" >&2
                     return 1
                 fi
                 branch="$1"
@@ -452,7 +451,7 @@ _pwt_cmd_new() {
     done
 
     if [ -z "$branch" ]; then
-        echo "使い方: pwt new <branch> [--from <base>]" >&2
+        echo "使い方: pwt add <branch> [--from <base>]" >&2
         return 1
     fi
 
@@ -538,8 +537,8 @@ _pwt_cmd_new() {
 }
 
 # ----------------------------------------------------------------
-# rm
-_pwt_cmd_rm() {
+# remove
+_pwt_cmd_remove() {
     local _ctx
     _ctx="$(_pwt_resolve_context)" || return 1
     local project_root project_name work_base
@@ -547,7 +546,7 @@ _pwt_cmd_rm() {
 
     local branch="${1:-}"
     if [ -z "$branch" ]; then
-        echo "使い方: pwt rm <branch>" >&2
+        echo "使い方: pwt remove <branch>" >&2
         return 1
     fi
 
@@ -673,7 +672,7 @@ _pwt_cmd_init() {
     echo ""
     echo "  次のステップ:"
     echo "    1. vim $project_root/.worktreelinks  (リンクしたいパターンのコメントを外す)"
-    echo "    2. pwt new <branch>                  (worktree を作成)"
+    echo "    2. pwt add <branch>                  (worktree を作成)"
 }
 
 # ----------------------------------------------------------------
@@ -687,9 +686,9 @@ _pwt_cmd_help() {
     echo '  pwt <名前>                          ブランチ名/ディレクトリ名の部分一致で移動'
     echo ''
     echo '  pwt init                            .worktreelinks を生成'
-    echo '  pwt new <branch> [--from <base>]    worktree を作成して移動'
+    echo '  pwt add <branch> [--from <base>]    worktree を作成して移動'
     echo '  pwt list                            worktree 一覧（明示的）'
-    echo '  pwt rm <branch>                     worktree を削除'
+    echo '  pwt remove <branch>                 worktree を削除'
     echo '  pwt sync                            シンボリックリンクを再同期（カレント worktree）'
     echo '  pwt unsync                          シンボリックリンクを全削除（カレント worktree）'
     echo '  pwt help                            このヘルプを表示'
@@ -697,7 +696,7 @@ _pwt_cmd_help() {
     echo '初回セットアップ:'
     echo '  cd /path/to/project'
     echo '  pwt init                    .worktreelinks を生成・編集'
-    echo '  pwt new feature/my-task     worktree を作成'
+    echo '  pwt add feature/my-task     worktree を作成'
     echo ''
     echo 'ライブラリ更新（このworktreeのみ）:'
     echo '  vim .worktreelinks          該当パターンをコメントアウト'
@@ -748,7 +747,7 @@ _pwt_completion_wt_branches() {
 }
 
 _pwt_completions() {
-    local subcmd_list=(init new list rm sync unsync help)
+    local subcmd_list=(init add list remove sync unsync help)
     local project_root
     project_root="$(_pwt_project_root)"
 
@@ -760,11 +759,11 @@ _pwt_completions() {
                 ;;
             3)
                 case "${words[2]}" in
-                    new)
+                    add)
                         local branches=("${(f)$(_pwt_completion_branches "$project_root")}")
                         compadd -- "${branches[@]}"
                         ;;
-                    rm)
+                    remove)
                         local worktrees=("${(f)$(_pwt_completion_wt_branches "$project_root")}")
                         compadd -- "${worktrees[@]}"
                         ;;
@@ -785,7 +784,7 @@ _pwt_completions() {
                 ;;
             2)
                 case "${COMP_WORDS[1]}" in
-                    new)
+                    add)
                         local branches=()
                         mapfile -t branches < <(_pwt_completion_branches "$project_root")
                         COMPREPLY=()
@@ -793,7 +792,7 @@ _pwt_completions() {
                             [[ -z "$cur" || "$w" == "$cur"* ]] && COMPREPLY+=("$w")
                         done
                         ;;
-                    rm)
+                    remove)
                         local worktrees=()
                         mapfile -t worktrees < <(_pwt_completion_wt_branches "$project_root")
                         COMPREPLY=()
