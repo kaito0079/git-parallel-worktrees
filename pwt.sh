@@ -9,14 +9,15 @@
 #   echo 'source "${XDG_DATA_HOME:-$HOME/.local/share}/pwt/pwt.sh"' >> ~/.zshrc
 #
 # 使い方:
-#   pwt                                 worktree 一覧（番号付き）
-#   pwt <番号|名前>                     worktree に移動
-#   pwt init                            .worktreelinks を生成
-#   pwt add <branch> [--from <b>]       worktree を作成して移動
-#   pwt list                            worktree 一覧（明示的）
-#   pwt remove <branch>                 worktree を削除
-#   pwt sync                            シンボリックリンクを再同期
-#   pwt unsync                          シンボリックリンクを全削除
+#   pwt                                       worktree 一覧（番号付き）
+#   pwt switch <番号|名前>                    worktree に移動
+#   pwt switch -c <branch> [--from <b>]       worktree を作成して移動
+#   pwt add <branch> [--from <b>]             worktree を作成（移動しない）
+#   pwt list                                  worktree 一覧（明示的）
+#   pwt remove <branch>                       worktree を削除
+#   pwt init                                  .worktreelinks を生成
+#   pwt sync                                  シンボリックリンクを再同期
+#   pwt unsync                                シンボリックリンクを全削除
 
 # =============================================================================
 # 内部ヘルパー関数
@@ -322,6 +323,7 @@ pwt() {
     fi
 
     case "$first" in
+        switch)  shift; _pwt_cmd_switch  "$@"; return $? ;;
         add)     shift; _pwt_cmd_add     "$@"; return $? ;;
         list)    shift; _pwt_cmd_list    "$@"; return $? ;;
         remove)  shift; _pwt_cmd_remove  "$@"; return $? ;;
@@ -331,8 +333,9 @@ pwt() {
         help)    shift; _pwt_cmd_help    "$@"; return $? ;;
     esac
 
-    _pwt_cmd_navigate "$first"
-    return $?
+    echo "エラー: 不明なサブコマンド: $first" >&2
+    echo "  pwt help でコマンド一覧を確認してください" >&2
+    return 1
 }
 
 # ----------------------------------------------------------------
@@ -358,8 +361,62 @@ _pwt_cmd_list() {
 }
 
 # ----------------------------------------------------------------
-# navigate
-_pwt_cmd_navigate() {
+# switch
+_pwt_cmd_switch() {
+    local create=false target="" args_for_add=()
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -c)
+                create=true
+                shift
+                if [ -z "${1:-}" ]; then
+                    echo "エラー: -c にはブランチ名が必要です" >&2
+                    echo "使い方: pwt switch -c <branch> [--from <base>]" >&2
+                    return 1
+                fi
+                target="$1"
+                ;;
+            --from)
+                args_for_add+=("--from")
+                shift
+                if [ -z "${1:-}" ]; then
+                    echo "エラー: --from には値が必要です" >&2
+                    return 1
+                fi
+                args_for_add+=("$1")
+                ;;
+            *)
+                if [ -n "$target" ]; then
+                    echo "エラー: 余分な引数: $1" >&2
+                    return 1
+                fi
+                target="$1"
+                ;;
+        esac
+        shift
+    done
+
+    if [ -z "$target" ]; then
+        echo "使い方: pwt switch <番号|名前>" >&2
+        echo "        pwt switch -c <branch> [--from <base>]" >&2
+        return 1
+    fi
+
+    # -c: 作成して移動
+    if [ "$create" = true ]; then
+        _pwt_cmd_add "$target" "${args_for_add[@]}" || return 1
+        # add が成功したら移動
+        _pwt_navigate "$target"
+        return $?
+    fi
+
+    # 既存 worktree に移動
+    _pwt_navigate "$target"
+}
+
+# worktree に cd する内部ヘルパー
+_pwt_navigate() {
     local target="$1"
 
     local _ctx
@@ -414,7 +471,7 @@ _pwt_cmd_navigate() {
     fi
 
     echo "エラー: '$target' に一致する worktree が見つかりません" >&2
-    echo "  pwt または pwt list で一覧を確認してください" >&2
+    echo "  pwt list で一覧を確認してください" >&2
     return 1
 }
 
@@ -541,8 +598,8 @@ _pwt_cmd_add() {
     fi
 
     echo ""
-    cd "$wt_path" || { echo "エラー: cd に失敗しました: $wt_path" >&2; return 1; }
-    echo "  移動先: $wt_path"
+    echo "  作成完了: $wt_path"
+    echo "  移動: pwt switch $branch"
 }
 
 # ----------------------------------------------------------------
@@ -690,22 +747,22 @@ _pwt_cmd_help() {
     echo 'pwt - Git Parallel Worktrees'
     echo ''
     echo '使い方（プロジェクトディレクトリ内で実行）:'
-    echo '  pwt                                 worktree 一覧（番号付き・現在位置マーク）'
-    echo '  pwt <番号>                          番号で worktree に移動'
-    echo '  pwt <名前>                          ブランチ名/ディレクトリ名の部分一致で移動'
+    echo '  pwt                                           worktree 一覧（番号付き・現在位置マーク）'
     echo ''
-    echo '  pwt init                            .worktreelinks を生成'
-    echo '  pwt add <branch> [--from <base>]    worktree を作成して移動'
-    echo '  pwt list                            worktree 一覧（明示的）'
-    echo '  pwt remove <branch>                 worktree を削除'
-    echo '  pwt sync                            シンボリックリンクを再同期（カレント worktree）'
-    echo '  pwt unsync                          シンボリックリンクを全削除（カレント worktree）'
-    echo '  pwt help                            このヘルプを表示'
+    echo '  pwt switch <番号|名前>                        worktree に移動'
+    echo '  pwt switch -c <branch> [--from <base>]        worktree を作成して移動'
+    echo '  pwt add <branch> [--from <base>]              worktree を作成（移動しない）'
+    echo '  pwt list                                      worktree 一覧（明示的）'
+    echo '  pwt remove <branch>                           worktree を削除'
+    echo '  pwt init                                      .worktreelinks を生成'
+    echo '  pwt sync                                      シンボリックリンクを再同期（カレント worktree）'
+    echo '  pwt unsync                                    シンボリックリンクを全削除（カレント worktree）'
+    echo '  pwt help                                      このヘルプを表示'
     echo ''
     echo '初回セットアップ:'
     echo '  cd /path/to/project'
-    echo '  pwt init                    .worktreelinks を生成・編集'
-    echo '  pwt add feature/my-task     worktree を作成'
+    echo '  pwt init                            .worktreelinks を生成・編集'
+    echo '  pwt switch -c feature/my-task       worktree を作成して移動'
     echo ''
     echo 'ライブラリ更新（このworktreeのみ）:'
     echo '  vim .worktreelinks          該当パターンをコメントアウト'
@@ -756,18 +813,21 @@ _pwt_completion_wt_branches() {
 }
 
 _pwt_completions() {
-    local subcmd_list=(init add list remove sync unsync help)
+    local subcmd_list=(switch add list remove init sync unsync help)
     local project_root
     project_root="$(_pwt_project_root)"
 
     if [ -n "$ZSH_VERSION" ]; then
         case "$CURRENT" in
             2)
-                local wt_targets=("${(f)$(_pwt_completion_wt_targets "$project_root")}")
-                compadd -- "${subcmd_list[@]}" "${wt_targets[@]}"
+                compadd -- "${subcmd_list[@]}"
                 ;;
             3)
                 case "${words[2]}" in
+                    switch)
+                        local wt_targets=("${(f)$(_pwt_completion_wt_targets "$project_root")}")
+                        compadd -- -c "${wt_targets[@]}"
+                        ;;
                     add)
                         local branches=("${(f)$(_pwt_completion_branches "$project_root")}")
                         compadd -- "${branches[@]}"
@@ -783,16 +843,22 @@ _pwt_completions() {
         local cur="${COMP_WORDS[COMP_CWORD]}"
         case "$COMP_CWORD" in
             1)
-                local wt_targets=()
-                mapfile -t wt_targets < <(_pwt_completion_wt_targets "$project_root")
                 COMPREPLY=()
                 local w
-                for w in "${subcmd_list[@]}" "${wt_targets[@]}"; do
+                for w in "${subcmd_list[@]}"; do
                     [[ -z "$cur" || "$w" == "$cur"* ]] && COMPREPLY+=("$w")
                 done
                 ;;
             2)
                 case "${COMP_WORDS[1]}" in
+                    switch)
+                        local wt_targets=()
+                        mapfile -t wt_targets < <(_pwt_completion_wt_targets "$project_root")
+                        COMPREPLY=()
+                        for w in -c "${wt_targets[@]}"; do
+                            [[ -z "$cur" || "$w" == "$cur"* ]] && COMPREPLY+=("$w")
+                        done
+                        ;;
                     add)
                         local branches=()
                         mapfile -t branches < <(_pwt_completion_branches "$project_root")

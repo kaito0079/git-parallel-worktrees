@@ -32,8 +32,8 @@ pwt init
 # 2. リンクしたいパターンのコメントを外す
 vim .worktreelinks
 
-# 3. 最初の worktree を作成
-pwt add feature/my-task
+# 3. 最初の worktree を作成して移動
+pwt switch -c feature/my-task
 ```
 
 ## シンボリックリンク（`.worktreelinks`）
@@ -82,12 +82,12 @@ pwt unsync
 | コマンド | 説明 |
 |---------|------|
 | `pwt` | worktree 一覧（番号付き・現在位置マーク） |
-| `pwt <番号>` | 番号で worktree に移動 |
-| `pwt <名前>` | ブランチ名/ディレクトリ名の部分一致で移動 |
-| `pwt init` | `.worktreelinks` を生成 |
-| `pwt add <branch> [--from <base>]` | worktree を作成（ブランチ作成・symlink設定・cd まで自動） |
+| `pwt switch <番号\|名前>` | worktree に移動 |
+| `pwt switch -c <branch> [--from <base>]` | worktree を作成して移動 |
+| `pwt add <branch> [--from <base>]` | worktree を作成（移動しない） |
 | `pwt list` | worktree 一覧（明示的） |
 | `pwt remove <branch>` | worktree を削除 |
+| `pwt init` | `.worktreelinks` を生成 |
 | `pwt sync` | カレント worktree のシンボリックリンクを再同期 |
 | `pwt unsync` | カレント worktree のシンボリックリンクを全削除 |
 | `pwt help` | ヘルプを表示 |
@@ -95,9 +95,9 @@ pwt unsync
 ## ナビゲーション
 
 ```bash
-pwt              # worktree 一覧（番号付き・現在位置 > マーク）
-pwt 2            # 番号で移動
-pwt feature      # ブランチ名の部分一致で移動
+pwt                      # worktree 一覧（番号付き・現在位置 > マーク）
+pwt switch 2             # 番号で移動
+pwt switch feature       # ブランチ名の部分一致で移動
 ```
 
 表示例:
