@@ -59,17 +59,18 @@ _pwt_realpath() {
 # 出力: "path\tbranch" の行リスト（detached HEAD の場合は "detached"）
 _pwt_parse_worktrees() {
     local root="$1"
-    local path="" branch="" detached=false
+    # 注意: zsh では path は PATH に連動する特殊変数のため wt_path を使用
+    local wt_path="" branch="" detached=false
     while IFS= read -r line; do
         if [[ "$line" == "worktree "* ]]; then
-            if [ -n "$path" ]; then
+            if [ -n "$wt_path" ]; then
                 if [ "$detached" = "true" ]; then
-                    printf '%s\tdetached\n' "$path"
+                    printf '%s\tdetached\n' "$wt_path"
                 else
-                    printf '%s\t%s\n' "$path" "${branch:-detached}"
+                    printf '%s\t%s\n' "$wt_path" "${branch:-detached}"
                 fi
             fi
-            path="${line#worktree }"
+            wt_path="${line#worktree }"
             branch=""
             detached="false"
         elif [[ "$line" == "branch "* ]]; then
@@ -79,11 +80,11 @@ _pwt_parse_worktrees() {
             detached="true"
         fi
     done < <(git -C "$root" worktree list --porcelain 2>/dev/null)
-    if [ -n "$path" ]; then
+    if [ -n "$wt_path" ]; then
         if [ "$detached" = "true" ]; then
-            printf '%s\tdetached\n' "$path"
+            printf '%s\tdetached\n' "$wt_path"
         else
-            printf '%s\t%s\n' "$path" "${branch:-detached}"
+            printf '%s\t%s\n' "$wt_path" "${branch:-detached}"
         fi
     fi
 }
@@ -329,12 +330,12 @@ _pwt_cmd_list() {
     current_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 
     echo "=== $project_name ==="
-    local i=0 path branch
-    while IFS=$'\t' read -r path branch; do
-        [ -z "$path" ] && continue
+    local i=0 wt_path branch
+    while IFS=$'\t' read -r wt_path branch; do
+        [ -z "$wt_path" ] && continue
         local marker=" "
-        [ "$current_root" = "$path" ] && marker=">"
-        printf " %s%2d  %-45s  (%s)\n" "$marker" "$i" "$path" "$branch"
+        [ "$current_root" = "$wt_path" ] && marker=">"
+        printf " %s%2d  %-45s  (%s)\n" "$marker" "$i" "$wt_path" "$branch"
         i=$((i + 1))
     done < <(_pwt_parse_worktrees "$project_root")
 }
@@ -352,13 +353,13 @@ _pwt_cmd_navigate() {
     local wt_data
     wt_data=$(_pwt_parse_worktrees "$project_root")
 
-    local path branch
+    local wt_path branch
     if [[ "$target" =~ ^[0-9]+$ ]]; then
         local idx=0
-        while IFS=$'\t' read -r path branch; do
-            [ -z "$path" ] && continue
+        while IFS=$'\t' read -r wt_path branch; do
+            [ -z "$wt_path" ] && continue
             if [ "$idx" -eq "$target" ]; then
-                cd "$path" || { echo "エラー: cd に失敗しました: $path" >&2; return 1; }
+                cd "$wt_path" || { echo "エラー: cd に失敗しました: $wt_path" >&2; return 1; }
                 return 0
             fi
             idx=$((idx + 1))
@@ -368,16 +369,16 @@ _pwt_cmd_navigate() {
     fi
 
     local exact_path="" match_path="" match_count=0 partial_list=""
-    while IFS=$'\t' read -r path branch; do
-        [ -z "$path" ] && continue
-        local dir_name="${path##*/}"
+    while IFS=$'\t' read -r wt_path branch; do
+        [ -z "$wt_path" ] && continue
+        local dir_name="${wt_path##*/}"
         if [ "$branch" = "$target" ] || [ "$dir_name" = "$target" ]; then
-            exact_path="$path"
+            exact_path="$wt_path"
             break
         elif [[ "$branch" == *"$target"* ]] || [[ "$dir_name" == *"$target"* ]]; then
-            match_path="$path"
+            match_path="$wt_path"
             match_count=$((match_count + 1))
-            partial_list="${partial_list}  $branch  ($path)"$'\n'
+            partial_list="${partial_list}  $branch  ($wt_path)"$'\n'
         fi
     done <<< "$wt_data"
 
@@ -697,9 +698,9 @@ _pwt_cmd_help() {
 _pwt_completion_wt_targets() {
     local project_root="${1:-}"
     [ -z "$project_root" ] && return
-    local i=0 path branch
-    while IFS=$'\t' read -r path branch; do
-        [ -z "$path" ] && continue
+    local i=0 wt_path branch
+    while IFS=$'\t' read -r wt_path branch; do
+        [ -z "$wt_path" ] && continue
         printf '%s\n' "$i"
         [ "$branch" != "detached" ] && printf '%s\n' "$branch"
         i=$((i + 1))
@@ -715,9 +716,9 @@ _pwt_completion_branches() {
 _pwt_completion_wt_branches() {
     local project_root="${1:-}"
     [ -z "$project_root" ] && return
-    local path branch
-    while IFS=$'\t' read -r path branch; do
-        [ "$path" != "$project_root" ] && [ "$branch" != "detached" ] \
+    local wt_path branch
+    while IFS=$'\t' read -r wt_path branch; do
+        [ "$wt_path" != "$project_root" ] && [ "$branch" != "detached" ] \
             && printf '%s\n' "$branch"
     done < <(_pwt_parse_worktrees "$project_root")
 }
