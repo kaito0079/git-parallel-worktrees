@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# pwt.sh のユニットテスト
+# 実行方法: bash tests/test_pwt.sh
+# 依存: bash 4.0+ または zsh 5.0+
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PWT_SH="$SCRIPT_DIR/../pwt.sh"
+
+# テストフレームワーク（最小実装）
+_PASS=0
+_FAIL=0
+
+pass() { echo "  [PASS] $1"; _PASS=$((_PASS + 1)); }
+fail() { echo "  [FAIL] $1"; _FAIL=$((_FAIL + 1)); }
+assert_eq() {
+    local desc="$1" got="$2" want="$3"
+    if [ "$got" = "$want" ]; then pass "$desc"; else
+        fail "$desc"
+        echo "         got:  $(printf '%q' "$got")"
+        echo "         want: $(printf '%q' "$want")"
+    fi
+}
+assert_match() {
+    local desc="$1" got="$2" pattern="$3"
+    if [[ "$got" =~ $pattern ]]; then pass "$desc"; else
+        fail "$desc"
+        echo "         got:     $(printf '%q' "$got")"
+        echo "         pattern: $pattern"
+    fi
+}
+assert_true()  { local desc="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$desc"; else fail "$desc"; fi; }
+assert_false() { local desc="$1"; shift; if ! "$@" >/dev/null 2>&1; then pass "$desc"; else fail "$desc"; fi; }
+
+# pwt.sh をソース（テスト用ダミー関数を先に定義して git 依存を回避）
+git() { echo ""; return 0; }
+ZSH_VERSION="${ZSH_VERSION:-}"
+BASH_VERSION="${BASH_VERSION:-}"
+# shellcheck source=../pwt.sh
+source "$PWT_SH"
+
+echo "=== _pwt_branch_slug ==="
+
+assert_eq "feature/auth → feature-auth" \
+    "$(_pwt_branch_slug 'feature/auth')" "feature-auth"
+assert_eq "fix/foo/bar → fix-foo-bar" \
+    "$(_pwt_branch_slug 'fix/foo/bar')" "fix-foo-bar"
+assert_eq "main → main (変換なし)" \
+    "$(_pwt_branch_slug 'main')" "main"
+
+echo ""
+echo "=== _pwt_validate_branch ==="
+
+# モックを解除して本物の git check-ref-format を使用
+unset -f git
+
+assert_true  "有効: feature/foo"        _pwt_validate_branch "feature/foo"
+assert_true  "有効: main"               _pwt_validate_branch "main"
+assert_true  "有効: fix/123"            _pwt_validate_branch "fix/123"
+assert_false "無効: 空文字"             _pwt_validate_branch ""
+assert_false "無効: -d (ダッシュ始まり)" _pwt_validate_branch "-d"
+assert_false "無効: --force"            _pwt_validate_branch "--force"
+assert_false "無効: a..b (二重ドット)"  _pwt_validate_branch "a..b"
+
+# モックを再設定
+git() { echo ""; return 0; }
+
+echo ""
+echo "=== _pwt_realpath ==="
+
+assert_eq "絶対パス → そのまま返す" \
+    "$(_pwt_realpath '/absolute/path' '/any/dir')" \
+    '/absolute/path'
+
+_rp_tmp="$(mktemp -d)"
+mkdir -p "$_rp_tmp/a/b"
+
+assert_eq "相対パス → link_dir 基準で解決" \
+    "$(_pwt_realpath 'somefile' "$_rp_tmp/a/b")" \
+    "$_rp_tmp/a/b/somefile"
+
+assert_eq "../ を含む相対パス → 正しく解決" \
+    "$(_pwt_realpath '../sibling' "$_rp_tmp/a/b")" \
+    "$_rp_tmp/a/sibling"
+
+assert_eq "存在しないディレクトリ → 空文字列" \
+    "$(_pwt_realpath 'file' '/nonexistent/__pwt_test__')" \
+    ""
+
+rm -rf "$_rp_tmp"
+
+echo ""
+echo "=== _pwt_parse_worktrees ==="
+
+git() {
+    cat <<'PORCELAIN'
+worktree /repos/myapp
+HEAD 0000000000000000000000000000000000000001
+branch refs/heads/main
+
+worktree /repos/myapp--feature-auth
+HEAD 0000000000000000000000000000000000000002
+branch refs/heads/feature/auth
+
+worktree /repos/myapp--detached
+HEAD 0000000000000000000000000000000000000003
+detached
+
+PORCELAIN
+}
+
+_parsed="$(_pwt_parse_worktrees "/repos/myapp")"
+assert_eq "メイン worktree: path/branch" \
+    "$(printf '%s' "$_parsed" | sed -n '1p')" \
+    "/repos/myapp	main"
+assert_eq "サブ worktree: feature/auth" \
+    "$(printf '%s' "$_parsed" | sed -n '2p')" \
+    "/repos/myapp--feature-auth	feature/auth"
+assert_eq "detached HEAD の worktree" \
+    "$(printf '%s' "$_parsed" | sed -n '3p')" \
+    "/repos/myapp--detached	detached"
+
+git() { echo ""; return 0; }
+
+echo ""
+echo "=== _pwt_clean_symlinks ==="
+
+_cs_src="$(mktemp -d)"
+_cs_dest="$(mktemp -d)"
+
+echo "content" > "$_cs_src/linked_file"
+mkdir "$_cs_src/linked_dir"
+ln -s "$_cs_src/linked_file" "$_cs_dest/linked_file"
+ln -s "$_cs_src/linked_dir"  "$_cs_dest/linked_dir"
+ln -s "/tmp"                  "$_cs_dest/other_link"
+
+_pwt_clean_symlinks "$_cs_src" "$_cs_dest" >/dev/null
+
+assert_false "src を指すリンク（ファイル）が削除される"    test -L "$_cs_dest/linked_file"
+assert_false "src を指すリンク（ディレクトリ）が削除される" test -L "$_cs_dest/linked_dir"
+assert_true  "他のリンクは残る"                            test -L "$_cs_dest/other_link"
+
+rm -rf "$_cs_src" "$_cs_dest"
+
+echo ""
+echo "=== _pwt_create_symlinks ==="
+
+_cr_src="$(mktemp -d)"
+_cr_dest="$(mktemp -d)"
+
+echo "secret" > "$_cr_src/.env"
+mkdir "$_cr_src/node_modules"
+mkdir "$_cr_src/vendor"
+
+cat > "$_cr_dest/.worktreelinks" <<'EOF'
+.env
+node_modules
+vendor
+EOF
+
+mkdir "$_cr_dest/vendor"  # 実ディレクトリ（上書きされないはず）
+
+# git ls-files --exclude-from をモック
+# 実際の git コマンドでは --exclude-from で .worktreelinks を読み取るが、
+# テスト環境では git リポジトリがないのでモックで代替
+git() {
+    if [[ "$*" == *"ls-files"* ]]; then
+        printf '.env\0node_modules\0vendor\0'
+        return 0
+    fi
+    echo ""
+}
+
+_pwt_create_symlinks "$_cr_src" "$_cr_dest" >/dev/null
+
+assert_true  ".env リンクが作成される"        test -L "$_cr_dest/.env"
+assert_true  "node_modules リンクが作成される" test -L "$_cr_dest/node_modules"
+assert_false "実ディレクトリは上書きされない"  test -L "$_cr_dest/vendor"
+assert_eq    ".env のリンク先が正しい" \
+    "$(readlink "$_cr_dest/.env")" "$_cr_src/.env"
+
+rm -rf "$_cr_src" "$_cr_dest"
+git() { echo ""; return 0; }
+
+echo ""
+echo "=============================="
+echo "テスト結果: ${_PASS} passed, ${_FAIL} failed"
+echo "=============================="
+
+[ "$_FAIL" -eq 0 ] && exit 0 || exit 1
