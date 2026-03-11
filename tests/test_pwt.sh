@@ -184,6 +184,54 @@ rm -rf "$_cr_src" "$_cr_dest"
 git() { echo ""; return 0; }
 
 echo ""
+echo "=== _pwt_resolve_context (pwt.worktreeDir) ==="
+
+# git モック: worktree list + config --get を模倣
+_rc_tmp="$(mktemp -d)"
+mkdir -p "$_rc_tmp/myapp"
+_rc_mock_worktree_dir=""
+
+git() {
+    if [[ "$*" == *"worktree list"* ]]; then
+        printf 'worktree %s\nHEAD 0000\nbranch refs/heads/main\n\n' "$_rc_tmp/myapp"
+        return 0
+    fi
+    if [[ "$*" == *"config --get pwt.worktreeDir"* ]]; then
+        if [ -n "$_rc_mock_worktree_dir" ]; then
+            echo "$_rc_mock_worktree_dir"
+            return 0
+        fi
+        return 1  # 未設定
+    fi
+    echo ""
+}
+
+# pwt.worktreeDir 未設定 → 親ディレクトリがそのまま work_base
+unset GIT_PARALLEL_WORKTREES_BASE 2>/dev/null || true
+_rc_result="$(_pwt_resolve_context)"
+IFS=$'\t' read -r _rc_root _rc_name _rc_base <<< "$_rc_result"
+assert_eq "pwt.worktreeDir 未設定: work_base はリポジトリの親" "$_rc_base" "$_rc_tmp"
+
+# pwt.worktreeDir 設定 → サブディレクトリが作成される
+_rc_mock_worktree_dir=".worktrees"
+_rc_result="$(_pwt_resolve_context)"
+IFS=$'\t' read -r _rc_root _rc_name _rc_base <<< "$_rc_result"
+assert_eq "pwt.worktreeDir 設定: work_base にサブディレクトリが追加" "$_rc_base" "$_rc_tmp/.worktrees"
+assert_true "pwt.worktreeDir: ディレクトリが自動作成される" test -d "$_rc_tmp/.worktrees"
+
+# pwt.worktreeDir に絶対パスはエラー
+_rc_mock_worktree_dir="/absolute/path"
+assert_false "pwt.worktreeDir: 絶対パスはエラー" _pwt_resolve_context
+
+# pwt.worktreeDir に .. を含むパスはエラー
+_rc_mock_worktree_dir="../escape"
+assert_false "pwt.worktreeDir: .. を含むパスはエラー" _pwt_resolve_context
+
+_rc_mock_worktree_dir=""
+rm -rf "$_rc_tmp"
+git() { echo ""; return 0; }
+
+echo ""
 echo "=============================="
 echo "テスト結果: ${_PASS} passed, ${_FAIL} failed"
 echo "=============================="

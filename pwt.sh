@@ -118,6 +118,24 @@ _pwt_resolve_context() {
         base="${root%/*}"
     fi
 
+    # git config pwt.worktreeDir: worktree を専用サブディレクトリに格納する
+    # 設定例: git config pwt.worktreeDir ".worktrees" → {base}/.worktrees/ 配下に作成
+    local wt_dir
+    wt_dir="$(git -C "$root" config --get pwt.worktreeDir 2>/dev/null || true)"
+    if [ -n "$wt_dir" ]; then
+        if [[ "$wt_dir" == /* ]] || [[ "$wt_dir" == *..* ]]; then
+            echo "エラー: pwt.worktreeDir は相対パス（サブディレクトリ名）で指定してください" >&2
+            return 1
+        fi
+        base="${base%/}/${wt_dir}"
+        if [ ! -d "$base" ]; then
+            mkdir -p "$base" || {
+                echo "エラー: ディレクトリの作成に失敗しました: $base" >&2
+                return 1
+            }
+        fi
+    fi
+
     printf '%s\t%s\t%s' "$root" "${root##*/}" "$base"
 }
 
@@ -687,8 +705,14 @@ _pwt_cmd_help() {
     echo '  npm install                 このworktreeに実体をインストール'
     echo ''
     echo '環境変数:'
-    echo '  GIT_PARALLEL_WORKTREES_BASE    worktree を配置するディレクトリ（デフォルト: リポジトリの親）'
+    echo '  GIT_PARALLEL_WORKTREES_BASE    worktree を配置するベースディレクトリ（デフォルト: リポジトリの親）'
     echo '                                 絶対パスかつ既存ディレクトリである必要があります'
+    echo ''
+    echo 'Git 設定:'
+    echo '  git config pwt.worktreeDir <dir>           worktree をまとめるサブディレクトリ名'
+    echo '  git config --global pwt.worktreeDir <dir>  全リポジトリに適用'
+    echo '                                             例: git config pwt.worktreeDir ".worktrees"'
+    echo '                                             → {ベース}/.worktrees/{project}--{branch} に配置'
 }
 
 # =============================================================================
