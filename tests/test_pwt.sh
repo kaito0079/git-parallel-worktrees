@@ -144,6 +144,88 @@ assert_true  "他のリンクは残る"                            test -L "$_cs
 rm -rf "$_cs_src" "$_cs_dest"
 
 echo ""
+echo "=== _pwt_split_worktreelinks ==="
+
+_sp_tmp="$(mktemp -d)"
+cat > "$_sp_tmp/config" <<'EOF'
+# comment
+.env
+.env.*
+
+[copy]
+vendor/
+node_modules/
+
+[link]
+.docker/
+EOF
+
+_sp_link="$_sp_tmp/link"
+_sp_copy="$_sp_tmp/copy"
+_pwt_split_worktreelinks "$_sp_tmp/config" "$_sp_link" "$_sp_copy"
+
+assert_match "link パターンに .env が含まれる" "$(cat "$_sp_link")" '\.env'
+assert_match "link パターンに .docker/ が含まれる" "$(cat "$_sp_link")" '\.docker/'
+assert_match "copy パターンに vendor/ が含まれる" "$(cat "$_sp_copy")" 'vendor/'
+assert_match "copy パターンに node_modules/ が含まれる" "$(cat "$_sp_copy")" 'node_modules/'
+
+# link 側に vendor が含まれないことを確認
+_sp_link_no_vendor=true
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" == *vendor* ]] && _sp_link_no_vendor=false
+done < "$_sp_link"
+assert_eq "link パターンに vendor が含まれない" "$_sp_link_no_vendor" "true"
+
+# copy 側に .env が含まれないことを確認
+_sp_copy_no_env=true
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" == *\.env* ]] && _sp_copy_no_env=false
+done < "$_sp_copy"
+assert_eq "copy パターンに .env が含まれない" "$_sp_copy_no_env" "true"
+
+rm -rf "$_sp_tmp"
+
+echo ""
+echo "=== _pwt_split_worktreelinks (末尾空白) ==="
+
+_sp2_tmp="$(mktemp -d)"
+# [copy] の後に末尾空白がある場合もセクションヘッダとして認識されるか
+printf '.env\n[copy]  \nvendor/\n' > "$_sp2_tmp/config"
+_sp2_link="$_sp2_tmp/link"
+_sp2_copy="$_sp2_tmp/copy"
+_pwt_split_worktreelinks "$_sp2_tmp/config" "$_sp2_link" "$_sp2_copy"
+assert_match "末尾空白あり [copy]: vendor が copy に含まれる" "$(cat "$_sp2_copy")" 'vendor/'
+# link 側に vendor が含まれないことを確認
+_sp2_link_has_vendor=false
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" == *vendor* ]] && _sp2_link_has_vendor=true
+done < "$_sp2_link"
+assert_eq "末尾空白あり [copy]: link 側に vendor が含まれない" "$_sp2_link_has_vendor" "false"
+rm -rf "$_sp2_tmp"
+
+echo ""
+echo "=== _pwt_has_patterns ==="
+
+_hp_tmp="$(mktemp -d)"
+
+echo "" > "$_hp_tmp/empty"
+assert_false "空ファイルにはパターンなし" _pwt_has_patterns "$_hp_tmp/empty"
+
+printf '# comment only\n\n' > "$_hp_tmp/comments"
+assert_false "コメントのみはパターンなし" _pwt_has_patterns "$_hp_tmp/comments"
+
+printf '# comment\n.env\n' > "$_hp_tmp/with_pattern"
+assert_true "パターンありで true" _pwt_has_patterns "$_hp_tmp/with_pattern"
+
+printf '   \n  \n' > "$_hp_tmp/spaces"
+assert_false "空白のみの行はパターンなし" _pwt_has_patterns "$_hp_tmp/spaces"
+
+rm -rf "$_hp_tmp"
+
+echo ""
 echo "=== _pwt_create_symlinks ==="
 
 _cr_src="$(mktemp -d)"
@@ -152,21 +234,32 @@ _cr_dest="$(mktemp -d)"
 echo "secret" > "$_cr_src/.env"
 mkdir "$_cr_src/node_modules"
 mkdir "$_cr_src/vendor"
+echo "autoload" > "$_cr_src/vendor/autoload.php"
 
 cat > "$_cr_dest/.worktreelinks" <<'EOF'
 .env
 node_modules
+[copy]
 vendor
 EOF
 
-mkdir "$_cr_dest/vendor"  # 実ディレクトリ（上書きされないはず）
-
 # git ls-files --exclude-from をモック
-# 実際の git コマンドでは --exclude-from で .worktreelinks を読み取るが、
-# テスト環境では git リポジトリがないのでモックで代替
+# exclude-from のパスから link/copy を判定して適切なエントリを返す
 git() {
     if [[ "$*" == *"ls-files"* ]]; then
-        printf '.env\0node_modules\0vendor\0'
+        local exclude_file=""
+        local arg
+        for arg in "$@"; do
+            if [[ "$arg" == --exclude-from=* ]]; then
+                exclude_file="${arg#--exclude-from=}"
+                break
+            fi
+        done
+        if [ -n "$exclude_file" ] && grep -q 'vendor' "$exclude_file" 2>/dev/null; then
+            printf 'vendor\0'
+        else
+            printf '.env\0node_modules\0'
+        fi
         return 0
     fi
     echo ""
@@ -174,13 +267,50 @@ git() {
 
 _pwt_create_symlinks "$_cr_src" "$_cr_dest" >/dev/null
 
-assert_true  ".env リンクが作成される"        test -L "$_cr_dest/.env"
-assert_true  "node_modules リンクが作成される" test -L "$_cr_dest/node_modules"
-assert_false "実ディレクトリは上書きされない"  test -L "$_cr_dest/vendor"
+assert_true  ".env リンクが作成される"           test -L "$_cr_dest/.env"
+assert_true  "node_modules リンクが作成される"    test -L "$_cr_dest/node_modules"
 assert_eq    ".env のリンク先が正しい" \
     "$(readlink "$_cr_dest/.env")" "$_cr_src/.env"
+assert_false "vendor はリンクではない（コピー）"  test -L "$_cr_dest/vendor"
+assert_true  "vendor がディレクトリとして存在"    test -d "$_cr_dest/vendor"
+assert_true  "vendor 内のファイルがコピーされている" test -f "$_cr_dest/vendor/autoload.php"
 
 rm -rf "$_cr_src" "$_cr_dest"
+git() { echo ""; return 0; }
+
+echo ""
+echo "=== _pwt_create_symlinks (symlink → copy 上書き) ==="
+
+_co_src="$(mktemp -d)"
+_co_dest="$(mktemp -d)"
+
+mkdir "$_co_src/vendor"
+echo "autoload" > "$_co_src/vendor/autoload.php"
+
+# dest に既存のシンボリックリンク（別の場所を指す）を配置
+_co_other="$(mktemp -d)"
+ln -s "$_co_other" "$_co_dest/vendor"
+
+cat > "$_co_dest/.worktreelinks" <<'EOF'
+[copy]
+vendor
+EOF
+
+git() {
+    if [[ "$*" == *"ls-files"* ]]; then
+        printf 'vendor\0'
+        return 0
+    fi
+    echo ""
+}
+
+_pwt_create_symlinks "$_co_src" "$_co_dest" >/dev/null
+
+assert_false "既存 symlink がコピーで上書きされる（リンクではない）" test -L "$_co_dest/vendor"
+assert_true  "コピー後に実ディレクトリとして存在" test -d "$_co_dest/vendor"
+assert_true  "コピー内のファイルが存在" test -f "$_co_dest/vendor/autoload.php"
+
+rm -rf "$_co_src" "$_co_dest" "$_co_other"
 git() { echo ""; return 0; }
 
 echo ""

@@ -189,8 +189,16 @@ _pwt_generate_worktreelinks() {
         echo '# gitignore に追加した場合も、worktree 作成時に自動でコピーされます。'
         echo '# いずれの場合も各 worktree が独立したコピーを持ちます。'
         echo '#'
+        echo '# [コピーモード]'
+        echo '# Docker 等でシンボリックリンクが使えない場合、[copy] セクションに'
+        echo '# パターンを書くと実体をコピーします。'
+        echo '#   .env              ← シンボリックリンク（デフォルト）'
+        echo '#   [copy]'
+        echo '#   vendor/           ← コピー'
+        echo '# [link] で再びシンボリックリンクモードに戻せます。'
+        echo '#'
         echo '# [制約]'
-        echo '# リンク対象は git ls-files --others --ignored で列挙されるファイル/ディレクトリに限ります。'
+        echo '# リンク/コピー対象は git ls-files --others --ignored で列挙されるファイル/ディレクトリに限ります。'
         echo '# つまり、メインリポジトリの .gitignore（または .git/info/exclude）で無視されているものが対象です。'
         echo ''
     } > "$config"
@@ -236,7 +244,108 @@ _pwt_clean_symlinks() {
     if [ "$count" -gt 0 ]; then echo "  ${count} 個のシンボリックリンクを削除"; fi
 }
 
-# .worktreelinks のパターンに従いシンボリックリンクを作成
+# .worktreelinks を [link] / [copy] セクションごとに分離
+# $1: .worktreelinks のパス
+# $2: link パターン出力先（一時ファイル）
+# $3: copy パターン出力先（一時ファイル）
+_pwt_split_worktreelinks() {
+    local config="$1" link_file="$2" copy_file="$3"
+    local mode="link"
+
+    while IFS= read -r line; do
+        # セクションヘッダ（末尾空白を許容）
+        if [[ "$line" =~ ^\[copy\][[:space:]]*$ ]]; then
+            mode="copy"
+            continue
+        elif [[ "$line" =~ ^\[link\][[:space:]]*$ ]]; then
+            mode="link"
+            continue
+        fi
+
+        if [ "$mode" = "copy" ]; then
+            echo "$line" >> "$copy_file"
+        else
+            echo "$line" >> "$link_file"
+        fi
+    done < "$config"
+}
+
+# パターンファイルに有効なパターンが含まれるかチェック
+_pwt_has_patterns() {
+    local file="$1"
+    while IFS= read -r line; do
+        local trimmed="${line#"${line%%[![:space:]]*}"}"
+        [[ -z "$trimmed" || "$line" == \#* ]] && continue
+        return 0
+    done < "$file"
+    return 1
+}
+
+# git ls-files の結果を走査し、モード（link / copy）に応じてシンボリックリンクまたはコピーを作成
+# $1: モード ("link" or "copy")
+# $2: src_root  $3: dest_root  $4: パターンファイル  $5: count 書き込み先ファイル
+_pwt_process_entries() {
+    local mode="$1" src_root="$2" dest_root="$3" pattern_file="$4" count_file="$5"
+    local count=0
+
+    while IFS= read -r -d '' raw_entry; do
+        local entry="${raw_entry%/}"
+        [ -z "$entry" ] && continue
+
+        # パストラバーサル防止（多層防御: git ls-files 出力は安全だが念のため）
+        if [[ "$entry" =~ (^|/)\.\.(/|$) ]]; then
+            echo "  [!] 不正なパスをスキップ: $entry" >&2
+            continue
+        fi
+
+        local src="$src_root/$entry"
+        local dest="$dest_root/$entry"
+        [ -e "$src" ] || continue
+
+        if [ "$mode" = "link" ]; then
+            # 実体ファイル/ディレクトリが存在する場合はスキップ
+            if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+                if [ -d "$dest" ]; then
+                    echo "  [スキップ] $entry/ (実ディレクトリが存在します)"
+                else
+                    echo "  [スキップ] $entry (実ファイルが存在します)"
+                fi
+                continue
+            fi
+            mkdir -p "${dest%/*}"
+            rm -f "$dest"
+            ln -s "$src" "$dest"
+            count=$((count + 1))
+            if [ -d "$src" ]; then echo "  [リンク] $entry/"; else echo "  [リンク] $entry"; fi
+        else
+            # コピーモード: シンボリックリンクが残っていれば削除して上書き
+            if [ -L "$dest" ]; then
+                rm -f "$dest"
+            elif [ -e "$dest" ]; then
+                if [ -d "$dest" ]; then
+                    echo "  [スキップ] $entry/ (実ディレクトリが存在します)"
+                else
+                    echo "  [スキップ] $entry (実ファイルが存在します)"
+                fi
+                continue
+            fi
+            mkdir -p "${dest%/*}"
+            if [ -d "$src" ]; then
+                cp -RP "$src" "$dest"
+                echo "  [コピー] $entry/"
+            else
+                cp "$src" "$dest"
+                echo "  [コピー] $entry"
+            fi
+            count=$((count + 1))
+        fi
+    done < <(git -C "$src_root" ls-files -z \
+        --others --ignored --exclude-from="$pattern_file" --directory 2>/dev/null)
+
+    echo "$count" > "$count_file"
+}
+
+# .worktreelinks のパターンに従いシンボリックリンク/コピーを作成
 # git ls-files --exclude-from で git 自身にパターンマッチを委譲する
 _pwt_create_symlinks() {
     local src_root="$1" dest_root="$2"
@@ -250,64 +359,33 @@ _pwt_create_symlinks() {
     # 既存のシンボリックリンクを削除
     _pwt_clean_symlinks "$src_root" "$dest_root"
 
-    # .worktreelinks に有効なパターンがあるか簡易チェック
-    local has_pattern=false
-    while IFS= read -r line; do
-        [[ -z "$line" || "$line" == \#* ]] && continue
-        has_pattern=true
-        break
-    done < "$config"
+    # .worktreelinks をパースして [link] / [copy] パターンを分離
+    local link_file copy_file count_file
+    link_file="$(mktemp)" || return 1
+    copy_file="$(mktemp)" || { rm -f "$link_file"; return 1; }
+    count_file="$(mktemp)" || { rm -f "$link_file" "$copy_file"; return 1; }
+    trap 'rm -f "$link_file" "$copy_file" "$count_file"' RETURN
+    _pwt_split_worktreelinks "$config" "$link_file" "$copy_file"
 
-    if [ "$has_pattern" = false ]; then
-        echo "  (.worktreelinks にパターンがありません)"
-        return
+    local link_count=0 copy_count=0
+
+    if _pwt_has_patterns "$link_file"; then
+        _pwt_process_entries "link" "$src_root" "$dest_root" "$link_file" "$count_file"
+        link_count=$(cat "$count_file")
     fi
 
-    # git ls-files --exclude-from で git にパターンマッチを委譲
-    # --others: 追跡されていないファイル
-    # --ignored: 無視されているもの（--exclude-from で指定）
-    # --directory: ディレクトリ単位で返す（ディレクトリ内を再帰しない）
-    # -z: NUL 区切り出力
-    local count=0
-    while IFS= read -r -d '' raw_entry; do
-        local entry="${raw_entry%/}"
-        [ -z "$entry" ] && continue
+    if _pwt_has_patterns "$copy_file"; then
+        _pwt_process_entries "copy" "$src_root" "$dest_root" "$copy_file" "$count_file"
+        copy_count=$(cat "$count_file")
+    fi
 
-        # パストラバーサル防止（多層防御）
-        if [[ "$entry" =~ (^|/)\.\.(/|$) ]]; then
-            echo "  [!] 不正なパスをスキップ: $entry" >&2
-            continue
-        fi
-
-        local src="$src_root/$entry"
-        local dest="$dest_root/$entry"
-
-        [ -e "$src" ] || continue
-
-        # 実体ファイル/ディレクトリが存在する場合はスキップ
-        if [ -e "$dest" ] && [ ! -L "$dest" ]; then
-            if [ -d "$dest" ]; then
-                echo "  [スキップ] $entry/ (実ディレクトリが存在します)"
-            else
-                echo "  [スキップ] $entry (実ファイルが存在します)"
-            fi
-            continue
-        fi
-
-        mkdir -p "${dest%/*}"
-        rm -f "$dest"
-        ln -s "$src" "$dest"
-        count=$((count + 1))
-        if [ -d "$src" ]; then
-            echo "  [リンク] $entry/"
-        else
-            echo "  [リンク] $entry"
-        fi
-    done < <(git -C "$src_root" ls-files -z \
-        --others --ignored --exclude-from="$config" --directory 2>/dev/null)
-
-    [ "$count" -eq 0 ] && echo "  (リンク対象がありません)" \
-                       || echo "  ${count} 個のシンボリックリンクを作成"
+    local total=$((link_count + copy_count))
+    if [ "$total" -eq 0 ]; then
+        echo "  (リンク/コピー対象がありません)"
+    else
+        [ "$link_count" -gt 0 ] && echo "  ${link_count} 個のシンボリックリンクを作成"
+        [ "$copy_count" -gt 0 ] && echo "  ${copy_count} 個のファイル/ディレクトリをコピー"
+    fi
 }
 
 # =============================================================================
