@@ -1,7 +1,7 @@
 # pwt - Git Parallel Worktrees
 
 Git worktree をブランチ単位でオンデマンドに作成・管理するシェルツール。
-ライブラリ（node_modules, vendor 等）をシンボリックリンクにすることで、新規 worktree で即作業開始できる。
+ライブラリ（node_modules, vendor 等）をシンボリックリンクまたはコピーすることで、新規 worktree で即作業開始できる。
 
 ## インストール
 
@@ -36,23 +36,53 @@ vim .worktreelinks
 pwt switch -c feature/my-task
 ```
 
-## シンボリックリンク（`.worktreelinks`）
+## ファイル共有（`.worktreelinks`）
 
-`.worktreelinks` に書いたパターンのファイル/ディレクトリが、main リポジトリからシンボリックリンクされる。
+`.worktreelinks` に書いたパターンのファイル/ディレクトリが、main リポジトリからシンボリックリンクまたはコピーされる。
 
 ```
 # .worktreelinks の例
-node_modules/
-vendor/
+# デフォルトはシンボリックリンク（一元管理向き）
 .env
 .env.*
 docker-compose.override.yml
 .claude/settings.local.json
+
+# [copy] セクション以降はコピー（Docker 等でシンボリックリンクが使えない場合）
+[copy]
+vendor/
+node_modules/
+
+# [link] で再びシンボリックリンクモードに戻せる
+[link]
+.docker/
 ```
 
-- `pwt add` で worktree を作成すると自動的にシンボリックリンクが設定される
+### シンボリックリンク vs コピー
+
+| | シンボリックリンク（デフォルト） | コピー（`[copy]`） |
+|---|---|---|
+| 用途 | 一元管理したいもの（`.env`） | 独立して動く必要があるもの（`vendor/`） |
+| 速度 | 瞬時 | ファイル数に比例 |
+| 変更の反映 | 即時（実体は1つ） | されない（独立コピー） |
+| Docker | 参照先がコンテナ外で壊れる | 問題なし |
+
+### 基本ルール
+
+- `pwt add` で worktree を作成すると自動的にリンク/コピーが設定される
 - **各 worktree は独立した `.worktreelinks` のコピーを持つ** → worktree ごとに個別設定が可能
 - `.worktreelinks` をコミットすればチームで設定を共有できる
+
+### `pwt sync` の挙動
+
+`pwt sync` はシンボリックリンクのみ再作成する。**`[copy]` でコピーされたファイルは `pwt sync` では削除・再コピーされない**（既に実体が存在するためスキップされる）。
+
+コピーを更新したい場合は、手動で削除してから再同期する:
+
+```bash
+rm -rf vendor/
+pwt sync        # → main リポジトリから再コピーされる
+```
 
 ### ライブラリ更新が必要なとき
 
@@ -88,7 +118,7 @@ pwt unsync
 | `pwt list` | worktree 一覧（明示的） |
 | `pwt remove <branch>` | worktree を削除 |
 | `pwt init` | `.worktreelinks` を生成 |
-| `pwt sync` | カレント worktree のシンボリックリンクを再同期 |
+| `pwt sync` | カレント worktree のリンク/コピーを再同期 |
 | `pwt unsync` | カレント worktree のシンボリックリンクを全削除 |
 | `pwt help` | ヘルプを表示 |
 
