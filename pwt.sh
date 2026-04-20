@@ -226,12 +226,11 @@ _pwt_clean_symlinks() {
     local src_root="$1" dest_root="$2"
     src_root="${src_root%/}"
     local count=0
+    local raw_target resolved
 
     while IFS= read -r -d '' link; do
-        local raw_target
         raw_target=$(readlink "$link" 2>/dev/null) || continue
 
-        local resolved
         resolved=$(_pwt_realpath "$raw_target" "${link%/*}")
         [ -z "$resolved" ] && resolved="$raw_target"
 
@@ -251,13 +250,15 @@ _pwt_clean_symlinks() {
 _pwt_split_worktreelinks() {
     local config="$1" link_file="$2" copy_file="$3"
     local mode="link"
+    local section_copy_re='^\[copy\][[:space:]]*$'
+    local section_link_re='^\[link\][[:space:]]*$'
 
     while IFS= read -r line; do
-        # セクションヘッダ（末尾空白を許容）
-        if [[ "$line" =~ ^\[copy\][[:space:]]*$ ]]; then
+        # セクションヘッダ
+        if [[ "$line" =~ $section_copy_re ]]; then
             mode="copy"
             continue
-        elif [[ "$line" =~ ^\[link\][[:space:]]*$ ]]; then
+        elif [[ "$line" =~ $section_link_re ]]; then
             mode="link"
             continue
         fi
@@ -364,7 +365,6 @@ _pwt_create_symlinks() {
     link_file="$(mktemp)" || return 1
     copy_file="$(mktemp)" || { rm -f "$link_file"; return 1; }
     count_file="$(mktemp)" || { rm -f "$link_file" "$copy_file"; return 1; }
-    trap 'rm -f "$link_file" "$copy_file" "$count_file"' RETURN
     _pwt_split_worktreelinks "$config" "$link_file" "$copy_file"
 
     local link_count=0 copy_count=0
@@ -378,6 +378,8 @@ _pwt_create_symlinks() {
         _pwt_process_entries "copy" "$src_root" "$dest_root" "$copy_file" "$count_file"
         copy_count=$(cat "$count_file")
     fi
+
+    rm -f "$link_file" "$copy_file" "$count_file"
 
     local total=$((link_count + copy_count))
     if [ "$total" -eq 0 ]; then
