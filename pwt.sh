@@ -431,13 +431,38 @@ _pwt_cmd_list() {
 
     echo "=== $project_name ==="
     local i=0 wt_path branch
+    # 登録済み worktree パスを集める (孤立検出用)
+    local registered_paths=""
     while IFS=$'\t' read -r wt_path branch; do
         [ -z "$wt_path" ] && continue
         local marker=" "
         [ "$current_root" = "$wt_path" ] && marker=">"
         printf " %s%2d  %-45s  (%s)\n" "$marker" "$i" "$wt_path" "$branch"
         i=$((i + 1))
+        registered_paths="${registered_paths}${wt_path}"$'\n'
     done < <(_pwt_parse_worktrees "$project_root")
+
+    # 孤立ディレクトリの検出: work_base に ${project_name}-- プレフィックスで
+    # 存在するが git worktree list に登録されていないディレクトリ
+    # 注: zsh の nomatch エラーを避けるため find で列挙する
+    local prefix="${project_name}--"
+    local orphans=()
+    if [ -d "$work_base" ]; then
+        local entry
+        while IFS= read -r -d '' entry; do
+            if ! printf '%s' "$registered_paths" | grep -Fxq "$entry"; then
+                orphans+=("$entry")
+            fi
+        done < <(find "$work_base" -maxdepth 1 -mindepth 1 -type d -name "${prefix}*" -print0 2>/dev/null)
+    fi
+    if [ "${#orphans[@]}" -gt 0 ]; then
+        echo ""
+        echo "[!] git 未登録の孤立ディレクトリがあります:"
+        for entry in "${orphans[@]}"; do
+            echo "      $entry"
+        done
+        echo "    削除するには: rm -rf <path>"
+    fi
 }
 
 # ----------------------------------------------------------------
