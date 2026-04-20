@@ -689,8 +689,10 @@ _pwt_cmd_add() {
     echo "  [+] worktree 作成: $wt_path"
 
     if [ ! -f "$wt_path/.worktreelinks" ]; then
-        if [ -f "$project_root/.worktreelinks" ]; then
-            cp "$project_root/.worktreelinks" "$wt_path/.worktreelinks"
+        local current_root
+        current_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+        if [ -n "$current_root" ] && [ -f "$current_root/.worktreelinks" ]; then
+            cp "$current_root/.worktreelinks" "$wt_path/.worktreelinks"
             echo "  [+] .worktreelinks をコピー"
         else
             echo "  [!] .worktreelinks が見つかりません (pwt init で生成できます)"
