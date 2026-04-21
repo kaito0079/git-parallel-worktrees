@@ -158,41 +158,41 @@ _pwt_generate_worktreelinks() {
         return
     fi
 
-    {
-        echo '# .worktreelinks — worktree にシンボリックリンクするファイル/ディレクトリのパターン'
-        echo '#'
-        echo '# リンクしたいパターンのコメント (#) を外してください。'
-        echo '# パターンは .gitignore と同じルールで解釈されます:'
-        echo '#   .env            どの階層でもマッチ (/ を含まないパターン)'
-        echo '#   path/to/file    ルートからの相対パス (/ を含むパターン)'
-        echo '#   *.log           ワイルドカード'
-        echo '#'
-        echo '# [ライブラリ (node_modules, vendor 等) について]'
-        echo '# シンボリックリンクにすると新しい worktree で即作業開始できます。'
-        echo '# ライブラリ更新が必要な worktree では:'
-        echo '#   1. このファイルから該当パターンをコメントアウト'
-        echo '#   2. pwt sync  → シンボリックリンクが外れる'
-        echo '#   3. npm install 等で実体をインストール'
-        echo '#   他の worktree には影響しません。'
-        echo '#'
-        echo '# [git 管理について]'
-        echo '# このファイルをコミットするとチームで設定を共有できます。'
-        echo '# gitignore に追加した場合も、worktree 作成時に自動でコピーされます。'
-        echo '# いずれの場合も各 worktree が独立したコピーを持ちます。'
-        echo '#'
-        echo '# [コピーモード]'
-        echo '# Docker 等でシンボリックリンクが使えない場合、[copy] セクションに'
-        echo '# パターンを書くと実体をコピーします。'
-        echo '#   .env              ← シンボリックリンク（デフォルト）'
-        echo '#   [copy]'
-        echo '#   vendor/           ← コピー'
-        echo '# [link] で再びシンボリックリンクモードに戻せます。'
-        echo '#'
-        echo '# [制約]'
-        echo '# リンク/コピー対象は git ls-files --others --ignored で列挙されるファイル/ディレクトリに限ります。'
-        echo '# つまり、メインリポジトリの .gitignore（または .git/info/exclude）で無視されているものが対象です。'
-        echo ''
-    } > "$config"
+    cat > "$config" <<'EOF'
+# .worktreelinks — worktree にシンボリックリンクするファイル/ディレクトリのパターン
+#
+# リンクしたいパターンのコメント (#) を外してください。
+# パターンは .gitignore と同じルールで解釈されます:
+#   .env            どの階層でもマッチ (/ を含まないパターン)
+#   path/to/file    ルートからの相対パス (/ を含むパターン)
+#   *.log           ワイルドカード
+#
+# [ライブラリ (node_modules, vendor 等) について]
+# シンボリックリンクにすると新しい worktree で即作業開始できます。
+# ライブラリ更新が必要な worktree では:
+#   1. このファイルから該当パターンをコメントアウト
+#   2. pwt sync  → シンボリックリンクが外れる
+#   3. npm install 等で実体をインストール
+#   他の worktree には影響しません。
+#
+# [git 管理について]
+# このファイルをコミットするとチームで設定を共有できます。
+# gitignore に追加した場合も、worktree 作成時に自動でコピーされます。
+# いずれの場合も各 worktree が独立したコピーを持ちます。
+#
+# [コピーモード]
+# Docker 等でシンボリックリンクが使えない場合、[copy] セクションに
+# パターンを書くと実体をコピーします。
+#   .env              ← シンボリックリンク（デフォルト）
+#   [copy]
+#   vendor/           ← コピー
+# [link] で再びシンボリックリンクモードに戻せます。
+#
+# [制約]
+# リンク/コピー対象は git ls-files --others --ignored で列挙されるファイル/ディレクトリに限ります。
+# つまり、メインリポジトリの .gitignore（または .git/info/exclude）で無視されているものが対象です。
+
+EOF
 
     local gitignore="$project_root/.gitignore"
     if [ -f "$gitignore" ]; then
