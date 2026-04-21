@@ -865,7 +865,7 @@ _pwt_cmd_help() {
     echo '  pwt switch -c <branch> [--from <base>]        worktree を作成して移動'
     echo '  pwt add <branch> [--from <base>]              worktree を作成（移動しない）'
     echo '  pwt list                                      worktree 一覧（明示的）'
-    echo '  pwt remove <branch>                           worktree を削除'
+    echo '  pwt remove <branch>                           worktree を削除（カレントが対象なら main リポジトリへ移動）'
     echo '  pwt init                                      .worktreelinks を生成'
     echo '  pwt sync                                      シンボリックリンクを再同期（カレント worktree）'
     echo '  pwt unsync                                    シンボリックリンクを全削除（カレント worktree）'
