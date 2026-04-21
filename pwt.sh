@@ -81,12 +81,16 @@ _pwt_parse_worktrees() {
     fi
 }
 
-# project_root / project_name / work_base をタブ区切りで stdout に出力
+# project_root / project_name / work_base / use_prefix をタブ区切りで stdout に出力
 # eval を使わず stdout 返却方式とすることでコードインジェクションを防ぐ
 # 使い方:
 #   local _ctx
 #   _ctx="$(_pwt_resolve_context)" || return 1
-#   IFS=$'\t' read -r project_root project_name work_base <<< "$_ctx"
+#   IFS=$'\t' read -r project_root project_name work_base use_prefix <<< "$_ctx"
+#
+# use_prefix は "true" / "false" で、worktree ディレクトリ名に <repo>-- を付けるか否か。
+# pwt.worktreeDir が "./" で始まる場合は main repo 自身を base とし、prefix デフォルトは false。
+# pwt.worktreePrefix (repo|none|auto) で明示的に上書き可能。
 _pwt_resolve_context() {
     local root
     root="$(_pwt_project_root)"
@@ -111,13 +115,26 @@ _pwt_resolve_context() {
     fi
 
     # git config pwt.worktreeDir: worktree を専用サブディレクトリに格納する
-    # 設定例: git config pwt.worktreeDir ".worktrees" → {base}/.worktrees/ 配下に作成
-    local wt_dir
+    # 設定例:
+    #   ".worktrees"    → {parent}/.worktrees/<repo>--<slug>    (親配下・主力)
+    #   "./.worktrees"  → {main_repo}/.worktrees/<slug>         (main repo 内配置)
+    local wt_dir use_main_base=false
     wt_dir="$(git -C "$root" config --get pwt.worktreeDir 2>/dev/null || true)"
+    if [[ "$wt_dir" == ./* ]]; then
+        use_main_base=true
+        wt_dir="${wt_dir#./}"
+        if [ -z "$wt_dir" ]; then
+            echo "エラー: pwt.worktreeDir = './' は main repo 自身を指すため指定できません" >&2
+            return 1
+        fi
+    fi
     if [ -n "$wt_dir" ]; then
         if [[ "$wt_dir" == /* ]] || [[ "$wt_dir" == *..* ]]; then
             echo "エラー: pwt.worktreeDir は相対パス（サブディレクトリ名）で指定してください" >&2
             return 1
+        fi
+        if [ "$use_main_base" = "true" ]; then
+            base="$root"
         fi
         base="${base%/}/${wt_dir}"
         if [ ! -d "$base" ]; then
@@ -128,7 +145,39 @@ _pwt_resolve_context() {
         fi
     fi
 
-    printf '%s\t%s\t%s' "$root" "${root##*/}" "$base"
+    # pwt.worktreePrefix: worktree ディレクトリ名に <repo>-- を付けるかを明示指定
+    #   "repo" → 常に付ける   /  "none" → 常に付けない  /  "auto" (既定) → 配置先から推論
+    local prefix_config use_prefix
+    prefix_config="$(git -C "$root" config --get pwt.worktreePrefix 2>/dev/null || true)"
+    case "$prefix_config" in
+        repo)       use_prefix=true ;;
+        none)       use_prefix=false ;;
+        ""|auto)
+            # auto: main repo 内配置なら付けない、それ以外は付ける
+            if [ "$use_main_base" = "true" ]; then
+                use_prefix=false
+            else
+                use_prefix=true
+            fi
+            ;;
+        *)
+            echo "エラー: pwt.worktreePrefix は repo|none|auto のいずれかを指定してください: $prefix_config" >&2
+            return 1
+            ;;
+    esac
+
+    printf '%s\t%s\t%s\t%s' "$root" "${root##*/}" "$base" "$use_prefix"
+}
+
+# worktree ディレクトリ名を組み立てる
+# 引数: work_base  project_name  use_prefix(true|false)  slug
+_pwt_wt_path() {
+    local work_base="$1" project_name="$2" use_prefix="$3" slug="$4"
+    if [ "$use_prefix" = "true" ]; then
+        printf '%s/%s--%s' "${work_base%/}" "$project_name" "$slug"
+    else
+        printf '%s/%s' "${work_base%/}" "$slug"
+    fi
 }
 
 # ブランチ名のバリデーション（git check-ref-format + フラグインジェクション防止）
@@ -415,8 +464,8 @@ pwt() {
 _pwt_cmd_list() {
     local _ctx
     _ctx="$(_pwt_resolve_context)" || return 1
-    local project_root project_name work_base
-    IFS=$'\t' read -r project_root project_name work_base <<< "$_ctx"
+    local project_root project_name work_base use_prefix
+    IFS=$'\t' read -r project_root project_name work_base use_prefix <<< "$_ctx"
 
     local current_root
     current_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -434,12 +483,18 @@ _pwt_cmd_list() {
         registered_paths+=("$wt_path")
     done < <(_pwt_parse_worktrees "$project_root")
 
-    # 孤立ディレクトリの検出: work_base に ${project_name}-- プレフィックスで
-    # 存在するが git worktree list に登録されていないディレクトリ
+    # 孤立ディレクトリの検出: work_base 配下に存在するが git worktree list に登録されていないディレクトリ
+    # use_prefix=true: ${project_name}-- プレフィックス付きディレクトリだけを対象にする
+    # use_prefix=false: work_base 配下（専用ディレクトリ想定）の全ディレクトリを対象にする
     # 注: zsh の nomatch エラーを避けるため find で列挙する
-    local prefix="${project_name}--"
     local orphans=()
     if [ -d "$work_base" ]; then
+        local name_pattern
+        if [ "$use_prefix" = "true" ]; then
+            name_pattern="${project_name}--*"
+        else
+            name_pattern="*"
+        fi
         local entry rp is_registered
         while IFS= read -r -d '' entry; do
             is_registered=false
@@ -450,7 +505,7 @@ _pwt_cmd_list() {
                 fi
             done
             [ "$is_registered" = false ] && orphans+=("$entry")
-        done < <(find "$work_base" -maxdepth 1 -mindepth 1 -type d -name "${prefix}*" -print0 2>/dev/null)
+        done < <(find "$work_base" -maxdepth 1 -mindepth 1 -type d -name "$name_pattern" -print0 2>/dev/null)
     fi
     if [ "${#orphans[@]}" -gt 0 ]; then
         echo ""
@@ -528,8 +583,8 @@ _pwt_navigate() {
 
     local _ctx
     _ctx="$(_pwt_resolve_context)" || return 1
-    local project_root project_name work_base
-    IFS=$'\t' read -r project_root project_name work_base <<< "$_ctx"
+    local project_root project_name work_base use_prefix
+    IFS=$'\t' read -r project_root project_name work_base use_prefix <<< "$_ctx"
 
     local wt_data
     wt_data=$(_pwt_parse_worktrees "$project_root")
@@ -587,8 +642,8 @@ _pwt_navigate() {
 _pwt_cmd_add() {
     local _ctx
     _ctx="$(_pwt_resolve_context)" || return 1
-    local project_root project_name work_base
-    IFS=$'\t' read -r project_root project_name work_base <<< "$_ctx"
+    local project_root project_name work_base use_prefix
+    IFS=$'\t' read -r project_root project_name work_base use_prefix <<< "$_ctx"
 
     local branch="" base=""
     while [ "$#" -gt 0 ]; do
@@ -650,7 +705,7 @@ _pwt_cmd_add() {
 
     local slug wt_path
     slug=$(_pwt_branch_slug "$branch")
-    wt_path="${work_base%/}/${project_name}--${slug}"
+    wt_path="$(_pwt_wt_path "$work_base" "$project_name" "$use_prefix" "$slug")"
     wt_path="${wt_path%/}"
 
     if [ -d "$wt_path" ]; then
@@ -717,8 +772,8 @@ _pwt_cmd_add() {
 _pwt_cmd_remove() {
     local _ctx
     _ctx="$(_pwt_resolve_context)" || return 1
-    local project_root project_name work_base
-    IFS=$'\t' read -r project_root project_name work_base <<< "$_ctx"
+    local project_root project_name work_base use_prefix
+    IFS=$'\t' read -r project_root project_name work_base use_prefix <<< "$_ctx"
 
     local branch="${1:-}"
     if [ -z "$branch" ]; then
@@ -730,7 +785,7 @@ _pwt_cmd_remove() {
 
     local slug wt_path
     slug=$(_pwt_branch_slug "$branch")
-    wt_path="${work_base%/}/${project_name}--${slug}"
+    wt_path="$(_pwt_wt_path "$work_base" "$project_name" "$use_prefix" "$slug")"
     wt_path="${wt_path%/}"
 
     if [ ! -d "$wt_path" ]; then
@@ -789,8 +844,8 @@ _pwt_cmd_remove() {
 _pwt_cmd_sync() {
     local _ctx
     _ctx="$(_pwt_resolve_context)" || return 1
-    local project_root project_name work_base
-    IFS=$'\t' read -r project_root project_name work_base <<< "$_ctx"
+    local project_root project_name work_base use_prefix
+    IFS=$'\t' read -r project_root project_name work_base use_prefix <<< "$_ctx"
 
     local current_root
     current_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -819,8 +874,8 @@ _pwt_cmd_sync() {
 _pwt_cmd_unsync() {
     local _ctx
     _ctx="$(_pwt_resolve_context)" || return 1
-    local project_root project_name work_base
-    IFS=$'\t' read -r project_root project_name work_base <<< "$_ctx"
+    local project_root project_name work_base use_prefix
+    IFS=$'\t' read -r project_root project_name work_base use_prefix <<< "$_ctx"
 
     local current_root
     current_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -842,8 +897,8 @@ _pwt_cmd_unsync() {
 _pwt_cmd_init() {
     local _ctx
     _ctx="$(_pwt_resolve_context)" || return 1
-    local project_root project_name work_base
-    IFS=$'\t' read -r project_root project_name work_base <<< "$_ctx"
+    local project_root project_name work_base use_prefix
+    IFS=$'\t' read -r project_root project_name work_base use_prefix <<< "$_ctx"
 
     echo "=== .worktreelinks 生成: $project_name ==="
     _pwt_generate_worktreelinks "$project_root"

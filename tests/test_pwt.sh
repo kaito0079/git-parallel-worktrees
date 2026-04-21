@@ -314,12 +314,13 @@ rm -rf "$_co_src" "$_co_dest" "$_co_other"
 git() { echo ""; return 0; }
 
 echo ""
-echo "=== _pwt_resolve_context (pwt.worktreeDir) ==="
+echo "=== _pwt_resolve_context (pwt.worktreeDir / worktreePrefix) ==="
 
 # git モック: worktree list + config --get を模倣
 _rc_tmp="$(mktemp -d)"
 mkdir -p "$_rc_tmp/myapp"
 _rc_mock_worktree_dir=""
+_rc_mock_prefix=""
 
 git() {
     if [[ "$*" == *"worktree list"* ]]; then
@@ -333,33 +334,99 @@ git() {
         fi
         return 1  # 未設定
     fi
+    if [[ "$*" == *"config --get pwt.worktreePrefix"* ]]; then
+        if [ -n "$_rc_mock_prefix" ]; then
+            echo "$_rc_mock_prefix"
+            return 0
+        fi
+        return 1  # 未設定
+    fi
     echo ""
 }
 
-# pwt.worktreeDir 未設定 → 親ディレクトリがそのまま work_base
+# pwt.worktreeDir 未設定 → 親ディレクトリがそのまま work_base / use_prefix=true (auto)
 unset GIT_PARALLEL_WORKTREES_BASE 2>/dev/null || true
 _rc_result="$(_pwt_resolve_context)"
-IFS=$'\t' read -r _rc_root _rc_name _rc_base <<< "$_rc_result"
-assert_eq "pwt.worktreeDir 未設定: work_base はリポジトリの親" "$_rc_base" "$_rc_tmp"
+IFS=$'\t' read -r _rc_root _rc_name _rc_base _rc_prefix <<< "$_rc_result"
+assert_eq "worktreeDir 未設定: work_base はリポジトリの親" "$_rc_base" "$_rc_tmp"
+assert_eq "worktreeDir 未設定: use_prefix=true (auto)" "$_rc_prefix" "true"
 
-# pwt.worktreeDir 設定 → サブディレクトリが作成される
+# pwt.worktreeDir=.worktrees → 親配下のサブディレクトリ / use_prefix=true (auto)
 _rc_mock_worktree_dir=".worktrees"
 _rc_result="$(_pwt_resolve_context)"
-IFS=$'\t' read -r _rc_root _rc_name _rc_base <<< "$_rc_result"
-assert_eq "pwt.worktreeDir 設定: work_base にサブディレクトリが追加" "$_rc_base" "$_rc_tmp/.worktrees"
-assert_true "pwt.worktreeDir: ディレクトリが自動作成される" test -d "$_rc_tmp/.worktrees"
+IFS=$'\t' read -r _rc_root _rc_name _rc_base _rc_prefix <<< "$_rc_result"
+assert_eq "worktreeDir=.worktrees: work_base にサブディレクトリが追加" "$_rc_base" "$_rc_tmp/.worktrees"
+assert_eq "worktreeDir=.worktrees: use_prefix=true (auto)" "$_rc_prefix" "true"
+assert_true "worktreeDir=.worktrees: ディレクトリが自動作成される" test -d "$_rc_tmp/.worktrees"
+
+# pwt.worktreeDir=./.worktrees → main repo 内配置 / use_prefix=false (auto)
+_rc_mock_worktree_dir="./.worktrees"
+_rc_result="$(_pwt_resolve_context)"
+IFS=$'\t' read -r _rc_root _rc_name _rc_base _rc_prefix <<< "$_rc_result"
+assert_eq "worktreeDir=./.worktrees: work_base は main repo 内" "$_rc_base" "$_rc_tmp/myapp/.worktrees"
+assert_eq "worktreeDir=./.worktrees: use_prefix=false (auto)" "$_rc_prefix" "false"
+assert_true "worktreeDir=./.worktrees: ディレクトリが自動作成される" test -d "$_rc_tmp/myapp/.worktrees"
+
+# worktreePrefix=repo で強制 prefix 付与
+_rc_mock_prefix="repo"
+_rc_result="$(_pwt_resolve_context)"
+IFS=$'\t' read -r _rc_root _rc_name _rc_base _rc_prefix <<< "$_rc_result"
+assert_eq "worktreePrefix=repo: use_prefix=true (内配置でも強制付与)" "$_rc_prefix" "true"
+
+# worktreePrefix=none で強制 prefix 省略
+_rc_mock_prefix="none"
+_rc_mock_worktree_dir=".worktrees"
+_rc_result="$(_pwt_resolve_context)"
+IFS=$'\t' read -r _rc_root _rc_name _rc_base _rc_prefix <<< "$_rc_result"
+assert_eq "worktreePrefix=none: use_prefix=false (外配置でも省略)" "$_rc_prefix" "false"
+
+# worktreePrefix=auto は未設定と同じ扱い
+_rc_mock_prefix="auto"
+_rc_mock_worktree_dir="./.worktrees"
+_rc_result="$(_pwt_resolve_context)"
+IFS=$'\t' read -r _rc_root _rc_name _rc_base _rc_prefix <<< "$_rc_result"
+assert_eq "worktreePrefix=auto + ./X: use_prefix=false" "$_rc_prefix" "false"
+
+# worktreePrefix に不正な値を指定するとエラー
+_rc_mock_prefix="invalid"
+assert_false "worktreePrefix: 不正な値はエラー" _pwt_resolve_context
+
+_rc_mock_prefix=""
 
 # pwt.worktreeDir に絶対パスはエラー
 _rc_mock_worktree_dir="/absolute/path"
-assert_false "pwt.worktreeDir: 絶対パスはエラー" _pwt_resolve_context
+assert_false "worktreeDir: 絶対パスはエラー" _pwt_resolve_context
 
 # pwt.worktreeDir に .. を含むパスはエラー
 _rc_mock_worktree_dir="../escape"
-assert_false "pwt.worktreeDir: .. を含むパスはエラー" _pwt_resolve_context
+assert_false "worktreeDir: .. を含むパスはエラー" _pwt_resolve_context
+
+# pwt.worktreeDir=./ 単独はエラー（main repo 自身を指すため）
+_rc_mock_worktree_dir="./"
+assert_false "worktreeDir=./: main repo 自身はエラー" _pwt_resolve_context
+
+# pwt.worktreeDir=./../escape は ../ 扱いでエラー
+_rc_mock_worktree_dir="./../escape"
+assert_false "worktreeDir=./../: .. を含むためエラー" _pwt_resolve_context
 
 _rc_mock_worktree_dir=""
 rm -rf "$_rc_tmp"
 git() { echo ""; return 0; }
+
+echo ""
+echo "=== _pwt_wt_path ==="
+
+assert_eq "use_prefix=true: <base>/<repo>--<slug>" \
+    "$(_pwt_wt_path '/parent/.worktrees' 'myapp' 'true' 'feature-auth')" \
+    "/parent/.worktrees/myapp--feature-auth"
+
+assert_eq "use_prefix=false: <base>/<slug> のみ" \
+    "$(_pwt_wt_path '/main/.worktrees' 'myapp' 'false' 'feature-auth')" \
+    "/main/.worktrees/feature-auth"
+
+assert_eq "use_prefix=true: 末尾スラッシュの正規化" \
+    "$(_pwt_wt_path '/parent/.worktrees/' 'myapp' 'true' 'slug')" \
+    "/parent/.worktrees/myapp--slug"
 
 echo ""
 echo "=============================="

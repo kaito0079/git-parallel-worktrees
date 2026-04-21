@@ -141,7 +141,7 @@ pwt switch feature       # ブランチ名の部分一致で移動
 
 ## ディレクトリ命名規則
 
-worktree は main リポジトリの隣に配置される:
+デフォルトでは worktree は main リポジトリの隣に配置される:
 
 ```
 /repos/myapp/                      ← main リポジトリ
@@ -149,7 +149,42 @@ worktree は main リポジトリの隣に配置される:
 /repos/myapp--fix-login/           ← worktree (branch: fix/login)
 ```
 
-配置先を変更する場合:
+### 配置先の変更
+
+`pwt.worktreeDir` で worktree の配置先とディレクトリ命名を切り替えられる:
+
+| 設定 | 配置例 | prefix |
+|---|---|---|
+| 未設定 | `/repos/myapp--feature-auth/` | `<repo>--<slug>` |
+| `.worktrees` | `/repos/.worktrees/myapp--feature-auth/` | `<repo>--<slug>` |
+| `./.worktrees` | `/repos/myapp/.worktrees/feature-auth/` | `<slug>` のみ |
+
+```bash
+# 親ディレクトリ配下の専用サブディレクトリにまとめる
+git config pwt.worktreeDir .worktrees
+
+# main リポジトリ内に配置する（プロジェクトごとに完結）
+git config pwt.worktreeDir ./.worktrees
+```
+
+### prefix の明示指定
+
+`pwt.worktreePrefix` で `<repo>--` prefix の付与を強制できる:
+
+| 値 | 挙動 |
+|---|---|
+| `auto` (既定) | 配置先から推論（`./X` なら付けない、それ以外は付ける） |
+| `repo` | 常に `<repo>--<slug>` |
+| `none` | 常に `<slug>` のみ |
+
+```bash
+# main repo 内配置でも <repo>-- を付けたい場合
+git config pwt.worktreeDir ./.worktrees
+git config pwt.worktreePrefix repo
+# → /repos/myapp/.worktrees/myapp--feature-auth/
+```
+
+### 環境変数での上書き
 
 ```bash
 export GIT_PARALLEL_WORKTREES_BASE=/path/to/worktrees
