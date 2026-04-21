@@ -776,6 +776,7 @@ _pwt_cmd_remove() {
     else
         if ! git -C "$project_root" worktree remove -- "$wt_path"; then
             echo "エラー: worktree の削除に失敗しました: $wt_path" >&2
+            echo "  手動で削除してください: rm -rf \"$wt_path\"" >&2
             return 1
         fi
     fi
