@@ -472,7 +472,7 @@ _pwt_cmd_switch() {
             -c)
                 create=true
                 shift
-                if [ -z "${1:-}" ]; then
+                if [ -z "${1:-}" ] || [[ "$1" == -* ]]; then
                     echo "エラー: -c にはブランチ名が必要です" >&2
                     echo "使い方: pwt switch -c <branch> [--from <base>]" >&2
                     return 1
@@ -502,6 +502,11 @@ _pwt_cmd_switch() {
     if [ -z "$target" ]; then
         echo "使い方: pwt switch <番号|名前>" >&2
         echo "        pwt switch -c <branch> [--from <base>]" >&2
+        return 1
+    fi
+
+    if [ "$create" != true ] && [ "${#args_for_add[@]}" -gt 0 ]; then
+        echo "エラー: --from は -c と組み合わせて指定してください" >&2
         return 1
     fi
 
