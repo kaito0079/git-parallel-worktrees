@@ -229,7 +229,8 @@ _pwt_clean_symlinks() {
             rm -f "$link"
             count=$((count + 1))
         fi
-    done < <(find "$dest_root" -maxdepth 50 -type l -not -path "*/.git/*" -print0 2>/dev/null)
+    # node_modules などのネスト構造を考慮して maxdepth 20 とする（一般的な JS プロジェクトで十分）
+    done < <(find "$dest_root" -maxdepth 20 -type l -not -path "*/.git/*" -print0 2>/dev/null)
 
     if [ "$count" -gt 0 ]; then echo "  ${count} 個のシンボリックリンクを削除"; fi
 }
