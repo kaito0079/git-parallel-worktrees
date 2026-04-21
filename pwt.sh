@@ -61,32 +61,23 @@ _pwt_realpath() {
 _pwt_parse_worktrees() {
     local root="$1"
     # 注意: zsh では path は PATH に連動する特殊変数のため wt_path を使用
-    local wt_path="" branch="" detached=false
+    # git porcelain は各 worktree について "branch <ref>" または "detached" のいずれかを出力する。
+    # detached の場合は branch が設定されないため、出力時に "${branch:-detached}" でフォールバックする。
+    local wt_path="" branch=""
     while IFS= read -r line; do
         if [[ "$line" == "worktree "* ]]; then
             if [ -n "$wt_path" ]; then
-                if [ "$detached" = "true" ]; then
-                    printf '%s\tdetached\n' "$wt_path"
-                else
-                    printf '%s\t%s\n' "$wt_path" "${branch:-detached}"
-                fi
+                printf '%s\t%s\n' "$wt_path" "${branch:-detached}"
             fi
             wt_path="${line#worktree }"
             branch=""
-            detached="false"
         elif [[ "$line" == "branch "* ]]; then
             local raw_branch="${line#branch }"
             branch="${raw_branch#refs/heads/}"
-        elif [[ "$line" == "detached" ]]; then
-            detached="true"
         fi
     done < <(git -C "$root" worktree list --porcelain 2>/dev/null)
     if [ -n "$wt_path" ]; then
-        if [ "$detached" = "true" ]; then
-            printf '%s\tdetached\n' "$wt_path"
-        else
-            printf '%s\t%s\n' "$wt_path" "${branch:-detached}"
-        fi
+        printf '%s\t%s\n' "$wt_path" "${branch:-detached}"
     fi
 }
 
