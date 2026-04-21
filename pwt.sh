@@ -691,9 +691,10 @@ _pwt_cmd_add() {
     echo "  [+] worktree 作成: $wt_path"
 
     if [ ! -f "$wt_path/.worktreelinks" ]; then
+        # _pwt_resolve_context を通過しているため git リポジトリ内が保証される
         local current_root
-        current_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-        if [ -n "$current_root" ] && [ -f "$current_root/.worktreelinks" ]; then
+        current_root="$(git rev-parse --show-toplevel)"
+        if [ -f "$current_root/.worktreelinks" ]; then
             cp "$current_root/.worktreelinks" "$wt_path/.worktreelinks"
             echo "  [+] .worktreelinks をコピー"
         else
