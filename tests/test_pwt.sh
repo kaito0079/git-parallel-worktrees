@@ -40,16 +40,6 @@ BASH_VERSION="${BASH_VERSION:-}"
 # shellcheck source=../pwt.sh
 source "$PWT_SH"
 
-echo "=== _pwt_branch_slug ==="
-
-assert_eq "feature/auth → feature-auth" \
-    "$(_pwt_branch_slug 'feature/auth')" "feature-auth"
-assert_eq "fix/foo/bar → fix-foo-bar" \
-    "$(_pwt_branch_slug 'fix/foo/bar')" "fix-foo-bar"
-assert_eq "main → main (変換なし)" \
-    "$(_pwt_branch_slug 'main')" "main"
-
-echo ""
 echo "=== _pwt_validate_branch ==="
 
 # モックを解除して本物の git check-ref-format を使用

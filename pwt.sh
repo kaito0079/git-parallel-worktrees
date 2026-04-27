@@ -15,7 +15,7 @@
 #   pwt add [-b <branch>] [-B <branch>] [--detach]
 #           <path> [<commit-ish>]             worktree を作成（移動しない）
 #   pwt list                                  worktree 一覧（明示的）
-#   pwt remove <branch>                       worktree を削除
+#   pwt remove <branch|name|.>                worktree を削除（. は現在の worktree）
 #   pwt init                                  .worktreelinks を生成
 #   pwt sync                                  シンボリックリンクを再同期
 #   pwt unsync                                シンボリックリンクを全削除
@@ -34,12 +34,6 @@ _pwt_project_root() {
             return
         fi
     done < <(git worktree list --porcelain 2>/dev/null)
-}
-
-# ブランチ名をディレクトリスラグに変換（/ → -）
-# NOTE: pwt remove のレガシー逆引きで使用中。残りの利用が無くなり次第削除予定。
-_pwt_branch_slug() {
-    printf '%s\n' "${1//\//-}"
 }
 
 # pwt add の <path> 引数を絶対パスに解決
@@ -848,34 +842,75 @@ _pwt_cmd_add() {
 
 # ----------------------------------------------------------------
 # remove
+# 構文: pwt remove <branch|name|path|.>
+#   - .         : 現在の worktree
+#   - 完全一致  : ブランチ名 / ディレクトリ名 / 絶対パスのいずれかと完全一致
+#   - 部分一致  : ブランチ名 / ディレクトリ名の部分文字列マッチ（一意なときのみ）
+#
+# pwt add がカスタム <path> を受けるようになり、ブランチ名 → slug → パスの
+# 逆引きでは到達できないケースが出るため、git worktree list を走査する方式に
+# 変更した。
 _pwt_cmd_remove() {
     local _ctx
     _ctx="$(_pwt_resolve_context)" || return 1
     local project_root project_name work_base use_prefix
     IFS=$'\t' read -r project_root project_name work_base use_prefix <<< "$_ctx"
 
-    local branch="${1:-}"
-    if [ -z "$branch" ]; then
-        echo "使い方: pwt remove <branch>" >&2
+    local arg="${1:-}"
+    if [ -z "$arg" ]; then
+        echo "使い方: pwt remove <branch|name|.>" >&2
         return 1
     fi
 
-    _pwt_validate_branch "$branch" || return 1
+    local wt_path=""
+    if [ "$arg" = "." ]; then
+        # '.' は現在の worktree を対象にする省略記法
+        local current_root
+        current_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+        if [ -z "$current_root" ]; then
+            echo "エラー: git リポジトリ内で実行してください" >&2
+            return 1
+        fi
+        if [ "$current_root" = "$project_root" ]; then
+            echo "エラー: main リポジトリは削除できません（pwt remove . は worktree 内で使用）" >&2
+            return 1
+        fi
+        wt_path="$current_root"
+    else
+        # git worktree list を走査してブランチ名 / ディレクトリ名 / パスでマッチ
+        local exact_path="" match_path="" match_count=0 partial_list=""
+        local p b dir_name
+        while IFS=$'\t' read -r p b; do
+            [ -z "$p" ] && continue
+            [ "$p" = "$project_root" ] && continue  # main リポジトリは対象外
+            dir_name="${p##*/}"
+            if [ "$b" = "$arg" ] || [ "$dir_name" = "$arg" ] || [ "$p" = "$arg" ]; then
+                exact_path="$p"
+                break
+            elif [[ "$b" == *"$arg"* ]] || [[ "$dir_name" == *"$arg"* ]]; then
+                match_path="$p"
+                match_count=$((match_count + 1))
+                partial_list="${partial_list}  $b  ($p)"$'\n'
+            fi
+        done < <(_pwt_parse_worktrees "$project_root")
 
-    local slug wt_path
-    slug=$(_pwt_branch_slug "$branch")
-    wt_path="$(_pwt_wt_path "$work_base" "$project_name" "$use_prefix" "$slug")"
-    wt_path="${wt_path%/}"
+        if [ -n "$exact_path" ]; then
+            wt_path="$exact_path"
+        elif [ "$match_count" -eq 1 ]; then
+            wt_path="$match_path"
+        elif [ "$match_count" -gt 1 ]; then
+            echo "エラー: '$arg' に複数の worktree がマッチします。より具体的な名前を指定してください:" >&2
+            printf '%s' "$partial_list" >&2
+            return 1
+        else
+            echo "エラー: '$arg' に一致する worktree が見つかりません" >&2
+            echo "  pwt list で一覧を確認してください" >&2
+            return 1
+        fi
+    fi
 
     if [ ! -d "$wt_path" ]; then
-        echo "エラー: worktree が見つかりません: $wt_path" >&2
-        return 1
-    fi
-
-    if ! git -C "$project_root" worktree list --porcelain 2>/dev/null \
-            | grep -Fxq "worktree $wt_path"; then
-        echo "エラー: '$wt_path' は git worktree として登録されていません" >&2
-        echo "  git worktree list で確認してください" >&2
+        echo "エラー: worktree のディレクトリが存在しません: $wt_path" >&2
         return 1
     fi
 
@@ -1003,7 +1038,7 @@ _pwt_cmd_help() {
     echo ''
     echo '  <path> 解釈: バレネーム → work_base 配下に配置 / / 含み・絶対パス → そのまま git worktree add'
     echo '  pwt list                                      worktree 一覧（明示的）'
-    echo '  pwt remove <branch>                           worktree を削除（カレントが対象なら main リポジトリへ移動）'
+    echo '  pwt remove <branch|name|.>                                       worktree を削除（. は現在の worktree / 対象なら main へ移動）'
     echo '  pwt init                                      .worktreelinks を生成'
     echo '  pwt sync                                      シンボリックリンクを再同期（カレント worktree）'
     echo '  pwt unsync                                    シンボリックリンクを全削除（カレント worktree）'

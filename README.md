@@ -126,7 +126,7 @@ pwt unsync
 | `pwt switch -c [-b <branch>] [-B <branch>] [--detach] <path> [<commit-ish>]` | worktree を作成して移動 |
 | `pwt add [-b <branch>] [-B <branch>] [--detach] <path> [<commit-ish>]` | worktree を作成（移動しない） |
 | `pwt list` | worktree 一覧（明示的） |
-| `pwt remove <branch>` | worktree を削除 |
+| `pwt remove <branch\|name\|.>` | worktree を削除（ブランチ名/ディレクトリ名/`.`=カレント） |
 | `pwt init` | `.worktreelinks` を生成 |
 | `pwt sync` | カレント worktree のリンク/コピーを再同期 |
 | `pwt unsync` | カレント worktree のシンボリックリンクを全削除 |
