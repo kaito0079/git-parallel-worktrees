@@ -1,7 +1,14 @@
 # pwt - Git Parallel Worktrees
 
-Git worktree をブランチ単位でオンデマンドに作成・管理するシェルツール。
-ライブラリ（node_modules, vendor 等）をシンボリックリンクまたはコピーすることで、新規 worktree で即作業開始できる。
+`git worktree` の薄いラッパーとなるシェルツール。引数体系は `git worktree add` と互換で、加えてバレネームの `<path>` を共通の置き場所に配置する利便性と、`.worktreelinks` によるシンボリックリンク/コピー同期を提供する。
+
+## 設計方針
+
+pwt は **pure な git worktree のラッパー** に徹する。CLI 構文・挙動は `git worktree` に合わせ、独自の引数体系（ブランチ名から自動でディレクトリ名を導出する等）は持たない。pwt の付加価値は次の 3 つに限定する:
+
+- バレネームの `<path>` を `work_base` 配下に配置する補助
+- worktree への `cd` 移動 (`pwt switch`)
+- `.worktreelinks` を使ったシンボリックリンク/コピー同期 (`pwt sync` / `unsync`)
 
 ## インストール
 
