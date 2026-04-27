@@ -11,7 +11,7 @@
 # 使い方:
 #   pwt                                       worktree 一覧（番号付き）
 #   pwt switch <番号|名前>                    worktree に移動
-#   pwt switch -c <branch> [--from <b>]       worktree を作成して移動
+#   pwt switch -c [-b <branch>] <path> [<commit-ish>]  worktree を作成して移動
 #   pwt add [-b <branch>] [-B <branch>] [--detach]
 #           <path> [<commit-ish>]             worktree を作成（移動しない）
 #   pwt list                                  worktree 一覧（明示的）
@@ -543,62 +543,75 @@ _pwt_cmd_list() {
 
 # ----------------------------------------------------------------
 # switch
+# 構文:
+#   pwt switch <番号|名前>
+#   pwt switch -c [-b <branch>] [-B <branch>] [--detach] <path> [<commit-ish>]
+#     → -c に続く引数はそのまま pwt add に転送し、作成後に <path> へ移動する
 _pwt_cmd_switch() {
-    local create=false target="" args_for_add=()
-
-    while [ "$#" -gt 0 ]; do
-        case "$1" in
-            -c)
-                create=true
-                shift
-                if [ -z "${1:-}" ] || [[ "$1" == -* ]]; then
-                    echo "エラー: -c にはブランチ名が必要です" >&2
-                    echo "使い方: pwt switch -c <branch> [--from <base>]" >&2
-                    return 1
-                fi
-                target="$1"
-                ;;
-            --from)
-                args_for_add+=("--from")
-                shift
-                if [ -z "${1:-}" ]; then
-                    echo "エラー: --from には値が必要です" >&2
-                    return 1
-                fi
-                args_for_add+=("$1")
-                ;;
-            *)
-                if [ -n "$target" ]; then
-                    echo "エラー: 余分な引数: $1" >&2
-                    return 1
-                fi
-                target="$1"
-                ;;
-        esac
-        shift
-    done
-
-    if [ -z "$target" ]; then
+    if [ "$#" -eq 0 ]; then
         echo "使い方: pwt switch <番号|名前>" >&2
-        echo "        pwt switch -c <branch> [--from <base>]" >&2
+        echo "        pwt switch -c [-b <branch>] [-B <branch>] [--detach] <path> [<commit-ish>]" >&2
         return 1
     fi
 
-    if [ "$create" != true ] && [ "${#args_for_add[@]}" -gt 0 ]; then
-        echo "エラー: --from は -c と組み合わせて指定してください" >&2
-        return 1
-    fi
+    if [ "$1" = "-c" ]; then
+        shift
+        if [ "$#" -eq 0 ]; then
+            echo "エラー: -c の後ろに引数が必要です" >&2
+            echo "使い方: pwt switch -c [-b <branch>] [-B <branch>] [--detach] <path> [<commit-ish>]" >&2
+            return 1
+        fi
 
-    # -c: 作成して移動
-    if [ "$create" = true ]; then
-        _pwt_cmd_add "$target" "${args_for_add[@]}" || return 1
-        # add が成功したら移動
-        _pwt_navigate "$target"
+        # add に転送する前に <path>（最初の positional）を抽出しておく
+        # 値を取るフラグ (-b / -B / --reason) は次の arg を読み飛ばす
+        local nav_target=""
+        local end_of_options=false
+        local skip_next=false
+        local arg
+        for arg in "$@"; do
+            if [ "$skip_next" = "true" ]; then
+                skip_next=false
+                continue
+            fi
+            if [ "$end_of_options" = "true" ]; then
+                nav_target="$arg"
+                break
+            fi
+            case "$arg" in
+                --)
+                    end_of_options=true
+                    ;;
+                -b|-B|--reason)
+                    skip_next=true
+                    ;;
+                -*)
+                    ;;
+                *)
+                    nav_target="$arg"
+                    break
+                    ;;
+            esac
+        done
+
+        _pwt_cmd_add "$@" || return 1
+
+        if [ -z "$nav_target" ]; then
+            echo "エラー: <path> を解決できません" >&2
+            return 1
+        fi
+        # 絶対/相対パスでも _pwt_navigate がディレクトリ名一致を見るため basename を渡す
+        if [[ "$nav_target" == */* ]]; then
+            nav_target="${nav_target##*/}"
+        fi
+        _pwt_navigate "$nav_target"
         return $?
     fi
 
-    # 既存 worktree に移動
-    _pwt_navigate "$target"
+    if [ "$#" -gt 1 ]; then
+        echo "エラー: 余分な引数: $2" >&2
+        return 1
+    fi
+    _pwt_navigate "$1"
 }
 
 # worktree に cd する内部ヘルパー
@@ -983,7 +996,8 @@ _pwt_cmd_help() {
     echo '  pwt                                           worktree 一覧（番号付き・現在位置マーク）'
     echo ''
     echo '  pwt switch <番号|名前>                        worktree に移動'
-    echo '  pwt switch -c <branch> [--from <base>]        worktree を作成して移動'
+    echo '  pwt switch -c [-b <branch>] [-B <branch>] [--detach]'
+    echo '              <path> [<commit-ish>]             worktree を作成して移動'
     echo '  pwt add [-b <branch>] [-B <branch>] [--detach]'
     echo '          <path> [<commit-ish>]                 worktree を作成（移動しない）'
     echo ''
@@ -997,8 +1011,8 @@ _pwt_cmd_help() {
     echo ''
     echo '初回セットアップ:'
     echo '  cd /path/to/project'
-    echo '  pwt init                            .worktreelinks を生成・編集'
-    echo '  pwt switch -c feature/my-task       worktree を作成して移動'
+    echo '  pwt init                                          .worktreelinks を生成・編集'
+    echo '  pwt switch -c -b feature/my-task my-task main     新規ブランチで worktree を作成して移動'
     echo ''
     echo 'ライブラリ更新（このworktreeのみ）:'
     echo '  vim .worktreelinks          該当パターンをコメントアウト'

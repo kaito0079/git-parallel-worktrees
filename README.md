@@ -40,7 +40,8 @@ pwt init
 vim .worktreelinks
 
 # 3. 最初の worktree を作成して移動
-pwt switch -c feature/my-task
+#    -b で新規ブランチ、my-task はディレクトリ名（バレネーム）、main は基点
+pwt switch -c -b feature/my-task my-task main
 ```
 
 ## ファイル共有（`.worktreelinks`）
@@ -122,7 +123,7 @@ pwt unsync
 |---------|------|
 | `pwt` | worktree 一覧（番号付き・現在位置マーク） |
 | `pwt switch <番号\|名前>` | worktree に移動 |
-| `pwt switch -c <branch> [--from <base>]` | worktree を作成して移動 |
+| `pwt switch -c [-b <branch>] [-B <branch>] [--detach] <path> [<commit-ish>]` | worktree を作成して移動 |
 | `pwt add [-b <branch>] [-B <branch>] [--detach] <path> [<commit-ish>]` | worktree を作成（移動しない） |
 | `pwt list` | worktree 一覧（明示的） |
 | `pwt remove <branch>` | worktree を削除 |
