@@ -429,6 +429,30 @@ assert_eq "use_prefix=true: 末尾スラッシュの正規化" \
     "/parent/.worktrees/myapp--slug"
 
 echo ""
+echo "=== _pwt_resolve_add_path ==="
+
+assert_eq "バレネーム: work_base 配下に prefix 付きで配置" \
+    "$(_pwt_resolve_add_path 'review_1' '/parent/.worktrees' 'myapp' 'true')" \
+    "/parent/.worktrees/myapp--review_1"
+
+assert_eq "バレネーム + use_prefix=false: prefix なし" \
+    "$(_pwt_resolve_add_path 'review_1' '/main/.worktrees' 'myapp' 'false')" \
+    "/main/.worktrees/review_1"
+
+assert_eq "絶対パス: そのまま返す" \
+    "$(_pwt_resolve_add_path '/tmp/wt' '/ignored' 'myapp' 'true')" \
+    "/tmp/wt"
+
+# 相対パス（/ を含む）は cwd 起点に展開される
+_rap_cwd_expected="$(pwd)/sub/wt"
+assert_eq "相対パス (/ 含む): cwd 起点で絶対パス化" \
+    "$(_pwt_resolve_add_path 'sub/wt' '/ignored' 'myapp' 'true')" \
+    "$_rap_cwd_expected"
+
+assert_false "バレネームに .. を含むとエラー" \
+    _pwt_resolve_add_path '..foo' '/base' 'myapp' 'true'
+
+echo ""
 echo "=============================="
 echo "テスト結果: ${_PASS} passed, ${_FAIL} failed"
 echo "=============================="

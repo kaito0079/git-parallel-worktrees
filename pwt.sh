@@ -12,7 +12,8 @@
 #   pwt                                       worktree 一覧（番号付き）
 #   pwt switch <番号|名前>                    worktree に移動
 #   pwt switch -c <branch> [--from <b>]       worktree を作成して移動
-#   pwt add <branch> [--from <b>]             worktree を作成（移動しない）
+#   pwt add [-b <branch>] [-B <branch>] [--detach]
+#           <path> [<commit-ish>]             worktree を作成（移動しない）
 #   pwt list                                  worktree 一覧（明示的）
 #   pwt remove <branch>                       worktree を削除
 #   pwt init                                  .worktreelinks を生成
@@ -36,8 +37,31 @@ _pwt_project_root() {
 }
 
 # ブランチ名をディレクトリスラグに変換（/ → -）
+# NOTE: pwt remove のレガシー逆引きで使用中。残りの利用が無くなり次第削除予定。
 _pwt_branch_slug() {
     printf '%s\n' "${1//\//-}"
+}
+
+# pwt add の <path> 引数を絶対パスに解決
+# - バレネーム (/ を含まない): work_base 配下に配置（pwt.worktreePrefix 設定を反映）
+# - / を含む or 絶対パス: そのまま使う（git worktree add と同じ挙動）
+# 引数: path_arg  work_base  project_name  use_prefix
+# stdout: 解決後の絶対パス（失敗時は非ゼロ終了）
+_pwt_resolve_add_path() {
+    local path_arg="$1" work_base="$2" project_name="$3" use_prefix="$4"
+    if [[ "$path_arg" == /* ]]; then
+        printf '%s' "${path_arg%/}"
+        return 0
+    fi
+    if [[ "$path_arg" == */* ]]; then
+        printf '%s/%s' "$(pwd)" "${path_arg%/}"
+        return 0
+    fi
+    if [[ "$path_arg" == *..* ]]; then
+        echo "エラー: 不正な <path> (.. を含む): $path_arg" >&2
+        return 1
+    fi
+    _pwt_wt_path "$work_base" "$project_name" "$use_prefix" "$path_arg"
 }
 
 # シンボリックリンクのターゲットを絶対パスに解決（macOS / Linux 両対応）
@@ -638,119 +662,161 @@ _pwt_navigate() {
 }
 
 # ----------------------------------------------------------------
-# add
+# add — git worktree add の薄いラッパー
+# 構文: pwt add [-b <new-branch>] [-B <new-branch>] [--detach] [<git worktree add の他フラグ>] <path> [<commit-ish>]
+#
+# pwt 独自の挙動は <path> がバレネーム（/ を含まない）の場合に work_base 配下に
+# 配置する点のみ。それ以外（/ 含み・絶対パス）はそのまま git worktree add に渡す。
 _pwt_cmd_add() {
     local _ctx
     _ctx="$(_pwt_resolve_context)" || return 1
     local project_root project_name work_base use_prefix
     IFS=$'\t' read -r project_root project_name work_base use_prefix <<< "$_ctx"
 
-    local branch="" base=""
+    local new_branch="" reset_branch=""
+    local -a passthrough_flags=()
+    local -a positional=()
+    local end_of_options=false
+
     while [ "$#" -gt 0 ]; do
+        if [ "$end_of_options" = "true" ]; then
+            positional+=("$1")
+            shift
+            continue
+        fi
         case "$1" in
-            --from)
+            -b)
                 shift
                 if [ -z "${1:-}" ]; then
-                    echo "エラー: --from には値が必要です" >&2
-                    echo "使い方: pwt add <branch> [--from <base>]" >&2
+                    echo "エラー: -b にはブランチ名が必要です" >&2
                     return 1
                 fi
-                base="$1"
+                new_branch="$1"
+                ;;
+            -B)
+                shift
+                if [ -z "${1:-}" ]; then
+                    echo "エラー: -B にはブランチ名が必要です" >&2
+                    return 1
+                fi
+                reset_branch="$1"
+                ;;
+            -d|--detach|--no-detach \
+            |-f|--force|--no-force \
+            |--checkout|--no-checkout \
+            |--lock|--no-lock \
+            |--orphan|--no-orphan \
+            |--track|--no-track \
+            |--guess-remote|--no-guess-remote \
+            |--relative-paths|--no-relative-paths \
+            |-q|--quiet)
+                passthrough_flags+=("$1")
+                ;;
+            --reason)
+                shift
+                if [ -z "${1:-}" ]; then
+                    echo "エラー: --reason には値が必要です" >&2
+                    return 1
+                fi
+                passthrough_flags+=("--reason" "$1")
+                ;;
+            --)
+                end_of_options=true
+                ;;
+            -*)
+                echo "エラー: 不明なオプション: $1" >&2
+                echo "使い方: pwt add [-b <new-branch>] [-B <new-branch>] [--detach] <path> [<commit-ish>]" >&2
+                return 1
                 ;;
             *)
-                if [ -n "$branch" ]; then
-                    echo "エラー: 余分な引数: $1" >&2
-                    echo "使い方: pwt add <branch> [--from <base>]" >&2
-                    return 1
-                fi
-                branch="$1"
+                positional+=("$1")
                 ;;
         esac
         shift
     done
 
-    if [ -z "$branch" ]; then
-        echo "使い方: pwt add <branch> [--from <base>]" >&2
+    # zsh は配列が 1-indexed のため $1/$2 経由でアクセスする（set -- で位置引数化）
+    local pos_count="${#positional[@]}"
+    if [ "$pos_count" -eq 0 ]; then
+        echo "使い方: pwt add [-b <new-branch>] [-B <new-branch>] [--detach] <path> [<commit-ish>]" >&2
+        return 1
+    fi
+    set -- "${positional[@]}"
+    if [ "$pos_count" -gt 2 ]; then
+        echo "エラー: 余分な引数: $3" >&2
+        return 1
+    fi
+    if [ -n "$new_branch" ] && [ -n "$reset_branch" ]; then
+        echo "エラー: -b と -B は同時に指定できません" >&2
         return 1
     fi
 
-    # --from 省略時は現在の worktree の HEAD を基点にする（git worktree add と同じ挙動）
-    if [ -z "$base" ]; then
-        base="$(git rev-parse HEAD 2>/dev/null)" || {
-            echo "エラー: 現在の HEAD を解決できません" >&2
-            return 1
-        }
+    if [ -n "$new_branch" ]; then
+        _pwt_validate_branch "$new_branch" || return 1
+    fi
+    if [ -n "$reset_branch" ]; then
+        _pwt_validate_branch "$reset_branch" || return 1
     fi
 
-    _pwt_validate_branch "$branch" || return 1
+    local path_arg="$1"
+    local commit_ish="${2:-}"
 
-    # base のバリデーション（rev-parse 済みの SHA でなければチェック）
-    if ! [[ "$base" =~ ^[0-9a-fA-F]{40,64}$ ]]; then
-        if [[ "$base" == -* ]]; then
-            echo "エラー: --from の値が '-' で始まっています: $base" >&2
-            return 1
-        fi
-        if ! [[ "$base" =~ ^[0-9a-fA-F]{7,64}$ ]]; then
-            if ! git check-ref-format "$base" >/dev/null 2>&1 \
-            && ! git check-ref-format --allow-onelevel "$base" >/dev/null 2>&1; then
-                echo "エラー: 不正な --from 値: $base" >&2
-                return 1
-            fi
-        fi
-        if ! git -C "$project_root" rev-parse --verify "$base" >/dev/null 2>&1; then
-            echo "エラー: --from '$base' が存在しません（ref または commit SHA を指定してください）" >&2
-            return 1
-        fi
+    if [ -z "$path_arg" ]; then
+        echo "エラー: <path> が空です" >&2
+        return 1
+    fi
+    if [[ "$path_arg" == -* ]]; then
+        echo "エラー: 不正な <path> ('-' で始まっている): $path_arg" >&2
+        return 1
+    fi
+    if [ -n "$commit_ish" ] && [[ "$commit_ish" == -* ]]; then
+        echo "エラー: <commit-ish> が '-' で始まっています: $commit_ish" >&2
+        return 1
     fi
 
-    local slug wt_path
-    slug=$(_pwt_branch_slug "$branch")
-    wt_path="$(_pwt_wt_path "$work_base" "$project_name" "$use_prefix" "$slug")"
+    local wt_path
+    wt_path="$(_pwt_resolve_add_path "$path_arg" "$work_base" "$project_name" "$use_prefix")" || return 1
     wt_path="${wt_path%/}"
 
-    if [ -d "$wt_path" ]; then
+    if [ -e "$wt_path" ]; then
         echo "エラー: '$wt_path' は既に存在します" >&2
-        echo "  ブランチ名が異なってもスラグが衝突する場合があります (/ → - 変換)" >&2
         return 1
     fi
 
-    echo "=== Worktree 作成: $branch ==="
+    echo "=== Worktree 作成: $wt_path ==="
 
-    local branch_created=""
-    if ! git -C "$project_root" show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
-        if git -C "$project_root" show-ref --verify --quiet "refs/remotes/origin/$branch" 2>/dev/null; then
-            if ! git -C "$project_root" branch --track -- "$branch" "origin/$branch"; then
-                echo "エラー: ブランチの作成に失敗しました: $branch (tracking origin/$branch)" >&2
-                return 1
-            fi
-            echo "  [+] ブランチ作成: $branch (tracking origin/$branch)"
-        else
-            if ! git -C "$project_root" branch -- "$branch" "$base"; then
-                echo "エラー: ブランチの作成に失敗しました: $branch (from $base)" >&2
-                return 1
-            fi
-            echo "  [+] ブランチ作成: $branch (from $base)"
-        fi
-        branch_created="1"
+    local -a git_args=(worktree add)
+    if [ "${#passthrough_flags[@]}" -gt 0 ]; then
+        git_args+=("${passthrough_flags[@]}")
+    fi
+    if [ -n "$new_branch" ]; then
+        git_args+=(-b "$new_branch")
+    fi
+    if [ -n "$reset_branch" ]; then
+        git_args+=(-B "$reset_branch")
+    fi
+    git_args+=(-- "$wt_path")
+    if [ -n "$commit_ish" ]; then
+        git_args+=("$commit_ish")
     fi
 
-    if ! git -C "$project_root" worktree add -- "$wt_path" "$branch" >/dev/null; then
+    if ! git -C "$project_root" "${git_args[@]}"; then
         echo "エラー: worktree の作成に失敗しました" >&2
-        echo "  ブランチが既に他の worktree でチェックアウトされている可能性があります" >&2
-        if [ -n "$branch_created" ]; then
-            git -C "$project_root" branch -D -- "$branch" 2>/dev/null \
-                && echo "  [ロールバック] ブランチを削除しました: $branch" >&2
-        fi
         return 1
     fi
     echo "  [+] worktree 作成: $wt_path"
 
     if [ ! -f "$wt_path/.worktreelinks" ]; then
-        # _pwt_resolve_context を通過しているため git リポジトリ内が保証される
+        local src_links=""
         local current_root
-        current_root="$(git rev-parse --show-toplevel)"
-        if [ -f "$current_root/.worktreelinks" ]; then
-            cp "$current_root/.worktreelinks" "$wt_path/.worktreelinks"
+        current_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+        if [ -n "$current_root" ] && [ -f "$current_root/.worktreelinks" ]; then
+            src_links="$current_root/.worktreelinks"
+        elif [ -f "$project_root/.worktreelinks" ]; then
+            src_links="$project_root/.worktreelinks"
+        fi
+        if [ -n "$src_links" ]; then
+            cp "$src_links" "$wt_path/.worktreelinks"
             echo "  [+] .worktreelinks をコピー"
         else
             echo "  [!] .worktreelinks が見つかりません (pwt init で生成できます)"
@@ -764,7 +830,7 @@ _pwt_cmd_add() {
 
     echo ""
     echo "  作成完了: $wt_path"
-    echo "  移動: pwt switch $branch"
+    echo "  移動: pwt switch ${wt_path##*/}"
 }
 
 # ----------------------------------------------------------------
@@ -918,7 +984,10 @@ _pwt_cmd_help() {
     echo ''
     echo '  pwt switch <番号|名前>                        worktree に移動'
     echo '  pwt switch -c <branch> [--from <base>]        worktree を作成して移動'
-    echo '  pwt add <branch> [--from <base>]              worktree を作成（移動しない）'
+    echo '  pwt add [-b <branch>] [-B <branch>] [--detach]'
+    echo '          <path> [<commit-ish>]                 worktree を作成（移動しない）'
+    echo ''
+    echo '  <path> 解釈: バレネーム → work_base 配下に配置 / / 含み・絶対パス → そのまま git worktree add'
     echo '  pwt list                                      worktree 一覧（明示的）'
     echo '  pwt remove <branch>                           worktree を削除（カレントが対象なら main リポジトリへ移動）'
     echo '  pwt init                                      .worktreelinks を生成'
@@ -963,12 +1032,6 @@ _pwt_completion_wt_targets() {
     done < <(_pwt_parse_worktrees "$project_root")
 }
 
-_pwt_completion_branches() {
-    local project_root="${1:-}"
-    [ -z "$project_root" ] && return
-    git -C "$project_root" branch --format='%(refname:short)' 2>/dev/null
-}
-
 _pwt_completion_wt_branches() {
     local project_root="${1:-}"
     [ -z "$project_root" ] && return
@@ -996,8 +1059,8 @@ _pwt_completions() {
                         compadd -- -c "${wt_targets[@]}"
                         ;;
                     add)
-                        local branches=("${(f)$(_pwt_completion_branches "$project_root")}")
-                        compadd -- "${branches[@]}"
+                        # <path> はユーザー定義名のため補完不可。フラグのみ提示する
+                        compadd -- -b -B --detach --force
                         ;;
                     remove)
                         local worktrees=("${(f)$(_pwt_completion_wt_branches "$project_root")}")
@@ -1027,10 +1090,9 @@ _pwt_completions() {
                         done
                         ;;
                     add)
-                        local branches=()
-                        mapfile -t branches < <(_pwt_completion_branches "$project_root")
+                        # <path> はユーザー定義名のため補完不可。フラグのみ提示する
                         COMPREPLY=()
-                        for w in "${branches[@]}"; do
+                        for w in -b -B --detach --force; do
                             [[ -z "$cur" || "$w" == "$cur"* ]] && COMPREPLY+=("$w")
                         done
                         ;;

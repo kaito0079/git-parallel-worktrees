@@ -116,18 +116,38 @@ pwt unsync
 
 ## コマンド一覧
 
+`pwt add` は `git worktree add` と同じ引数体系。
+
 | コマンド | 説明 |
 |---------|------|
 | `pwt` | worktree 一覧（番号付き・現在位置マーク） |
 | `pwt switch <番号\|名前>` | worktree に移動 |
 | `pwt switch -c <branch> [--from <base>]` | worktree を作成して移動 |
-| `pwt add <branch> [--from <base>]` | worktree を作成（移動しない） |
+| `pwt add [-b <branch>] [-B <branch>] [--detach] <path> [<commit-ish>]` | worktree を作成（移動しない） |
 | `pwt list` | worktree 一覧（明示的） |
 | `pwt remove <branch>` | worktree を削除 |
 | `pwt init` | `.worktreelinks` を生成 |
 | `pwt sync` | カレント worktree のリンク/コピーを再同期 |
 | `pwt unsync` | カレント worktree のシンボリックリンクを全削除 |
 | `pwt help` | ヘルプを表示 |
+
+### 使用例
+
+```bash
+# 新規ブランチ + 任意のディレクトリ名（チケット名のブランチを review_1 などで管理したいとき）
+pwt add -b feature/PROJ-123 review_1 main
+
+# 既存ブランチをチェックアウト（チェックアウト先のディレクトリ名を指定）
+pwt add review_1 feature/PROJ-123
+
+# ディレクトリ名と同名のブランチを新規作成（git worktree のデフォルト挙動）
+pwt add hotfix
+```
+
+### `<path>` の解釈
+
+- **バレネーム**（`/` を含まない、例: `review_1`）→ `work_base` 配下に配置（`pwt.worktreePrefix` 設定を反映）
+- **`/` を含む or 絶対パス** → そのまま `git worktree add` に渡す
 
 ## ナビゲーション
 
@@ -142,29 +162,29 @@ pwt switch feature       # ブランチ名の部分一致で移動
 ```
 === myapp ===
   > 0  /repos/myapp                         (main)
-    1  /repos/myapp--feature-auth           (feature/auth)
-    2  /repos/myapp--fix-login              (fix/login)
+    1  /repos/myapp--review_1               (feature/PROJ-123)
+    2  /repos/myapp--hotfix                 (hotfix)
 ```
 
 ## ディレクトリ命名規則
 
-デフォルトでは worktree は main リポジトリの隣に配置される:
+`pwt add <path>` の `<path>` がバレネーム（`/` を含まない）のとき、pwt が `work_base` 配下に配置する。デフォルトでは main リポジトリの隣:
 
 ```
 /repos/myapp/                      ← main リポジトリ
-/repos/myapp--feature-auth/        ← worktree (branch: feature/auth)
-/repos/myapp--fix-login/           ← worktree (branch: fix/login)
+/repos/myapp--review_1/            ← worktree (path: review_1)
+/repos/myapp--hotfix/              ← worktree (path: hotfix)
 ```
 
 ### 配置先の変更
 
 `pwt.worktreeDir` で worktree の配置先とディレクトリ命名を切り替えられる:
 
-| 設定 | 配置例 | prefix |
+| 設定 | 配置例 (`pwt add review_1` のとき) | prefix |
 |---|---|---|
-| 未設定 | `/repos/myapp--feature-auth/` | `<repo>--<slug>` |
-| `.worktrees` | `/repos/.worktrees/myapp--feature-auth/` | `<repo>--<slug>` |
-| `./.worktrees` | `/repos/myapp/.worktrees/feature-auth/` | `<slug>` のみ |
+| 未設定 | `/repos/myapp--review_1/` | `<repo>--<path>` |
+| `.worktrees` | `/repos/.worktrees/myapp--review_1/` | `<repo>--<path>` |
+| `./.worktrees` | `/repos/myapp/.worktrees/review_1/` | `<path>` のみ |
 
 ```bash
 # 親ディレクトリ配下の専用サブディレクトリにまとめる
