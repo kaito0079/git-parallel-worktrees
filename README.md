@@ -143,12 +143,34 @@ pwt add review_1 feature/PROJ-123
 
 # ディレクトリ名と同名のブランチを新規作成（git worktree のデフォルト挙動）
 pwt add hotfix
+
+# `/` 含みブランチを 1 引数で扱う（auto branch mode）
+# ディレクトリ・ブランチともに feature/PROJ-123 になる
+pwt switch -c feature/PROJ-123
 ```
 
 ### `<path>` の解釈
 
 - **バレネーム**（`/` を含まない、例: `review_1`）→ `work_base` 配下に配置（`pwt.worktreePrefix` 設定を反映）
 - **`/` を含む or 絶対パス** → そのまま `git worktree add` に渡す
+
+### auto branch mode
+
+`<path>` が絶対パスや相対パス明示 (`./foo`, `../foo`) でなく、`-b` / `-B` / `--detach` および `<commit-ish>` がいずれも未指定のときは、`<path>` をブランチ名として自動推論する (bare name / `/` 含みのどちらでも有効):
+
+| 状態 | 挙動 |
+|------|------|
+| `refs/heads/<path>` が存在 | そのブランチをチェックアウト |
+| `refs/remotes/origin/<path>` のみ存在 | 同名 local ブランチを origin 追従で作成 |
+| どこにも無い | HEAD ベースで新規ブランチを作成 |
+
+worktree のディレクトリは `<path>` をそのまま使い (`work_base/<path>`)、ブランチ名と一致する。`pwt switch -c feature/PROJ-123` で「ディレクトリも作業中ブランチも `feature/PROJ-123`」、`pwt switch -c hotfix` で「ディレクトリもブランチも `hotfix`」になる。
+
+明示的にディレクトリとブランチを分けたい場合は `-b` を使う:
+
+```bash
+pwt switch -c -b feature/PROJ-123 review_1 main   # ブランチ feature/PROJ-123 / ディレクトリ review_1
+```
 
 ## ナビゲーション
 

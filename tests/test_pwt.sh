@@ -443,6 +443,147 @@ assert_false "バレネームに .. を含むとエラー" \
     _pwt_resolve_add_path '..foo' '/base' 'myapp' 'true'
 
 echo ""
+echo "=== _pwt_cmd_add: auto branch mode (integration) ==="
+
+# 実 git を使った統合テスト。`/` を含む <path> をブランチ名として
+# auto-detect する 3 ケース (A: ローカル既存 / B: origin のみ / C: どこにも無し) を検証する。
+unset -f git
+unset GIT_PARALLEL_WORKTREES_BASE 2>/dev/null || true
+
+_ab_root="$(mktemp -d)"
+_ab_remote="$_ab_root/remote.git"
+_ab_repo="$_ab_root/myapp"
+
+# bare remote を用意し、そこに main + feature/origin-only を push する
+git init --bare --quiet "$_ab_remote"
+
+# main repo を作成
+# - pwt.worktreeDir=./.worktrees: main repo 内配置 (deterministic な path)
+# - pwt.worktreePrefix=none:      ユーザの global 設定を上書きして prefix なしに固定
+git init --quiet -b main "$_ab_repo"
+git -C "$_ab_repo" config user.email "test@example.com"
+git -C "$_ab_repo" config user.name "test"
+git -C "$_ab_repo" config commit.gpgsign false
+git -C "$_ab_repo" config pwt.worktreeDir "./.worktrees"
+git -C "$_ab_repo" config pwt.worktreePrefix "none"
+echo "init" > "$_ab_repo/README"
+git -C "$_ab_repo" add README
+git -C "$_ab_repo" commit --quiet -m "init"
+
+git -C "$_ab_repo" remote add origin "$_ab_remote"
+
+# A ケース用: ローカルブランチ feature/local-existing
+git -C "$_ab_repo" branch feature/local-existing
+
+# B ケース用: remote にのみ存在する feature/origin-only
+git -C "$_ab_repo" checkout --quiet -b feature/origin-only
+echo "v" > "$_ab_repo/x"
+git -C "$_ab_repo" add x
+git -C "$_ab_repo" commit --quiet -m "origin-only"
+git -C "$_ab_repo" push --quiet origin feature/origin-only
+git -C "$_ab_repo" checkout --quiet main
+git -C "$_ab_repo" branch -D feature/origin-only >/dev/null
+
+# fetch して remote-tracking ref refs/remotes/origin/feature/origin-only を作る
+git -C "$_ab_repo" fetch --quiet origin
+
+# .worktrees ディレクトリが auto-detect で作られるため事前作成
+mkdir -p "$_ab_repo/.worktrees"
+
+# テスト用 cd helper
+_ab_cd_back() { cd "$SCRIPT_DIR" 2>/dev/null || true; }
+
+# --- A) ローカルブランチが存在する場合 ---
+cd "$_ab_repo"
+_pwt_cmd_add "feature/local-existing" >/dev/null 2>&1
+_ab_a_path="$_ab_repo/.worktrees/feature/local-existing"
+assert_true  "A: worktree ディレクトリが work_base/<path> に作られる" \
+    test -d "$_ab_a_path"
+assert_eq    "A: その worktree のブランチが <path> と一致" \
+    "$(git -C "$_ab_a_path" symbolic-ref --short HEAD 2>/dev/null)" \
+    "feature/local-existing"
+_ab_cd_back
+
+# --- B) origin のみ存在する場合 ---
+cd "$_ab_repo"
+_pwt_cmd_add "feature/origin-only" >/dev/null 2>&1
+_ab_b_path="$_ab_repo/.worktrees/feature/origin-only"
+assert_true  "B: worktree ディレクトリが work_base/<path> に作られる" \
+    test -d "$_ab_b_path"
+assert_eq    "B: ブランチが <path> として local 作成される" \
+    "$(git -C "$_ab_b_path" symbolic-ref --short HEAD 2>/dev/null)" \
+    "feature/origin-only"
+_ab_cd_back
+
+# --- C) どこにも存在しない場合 ---
+cd "$_ab_repo"
+_pwt_cmd_add "feature/brand-new" >/dev/null 2>&1
+_ab_c_path="$_ab_repo/.worktrees/feature/brand-new"
+assert_true  "C: worktree ディレクトリが work_base/<path> に作られる" \
+    test -d "$_ab_c_path"
+assert_eq    "C: ブランチが HEAD ベースで新規作成され <path> と一致" \
+    "$(git -C "$_ab_c_path" symbolic-ref --short HEAD 2>/dev/null)" \
+    "feature/brand-new"
+_ab_cd_back
+
+# --- bare name でも auto-detect が有効: ローカル既存ブランチを checkout ---
+git -C "$_ab_repo" branch hotfix-bare
+cd "$_ab_repo"
+_pwt_cmd_add "hotfix-bare" >/dev/null 2>&1
+_ab_bare_path="$_ab_repo/.worktrees/hotfix-bare"
+assert_true  "bare name (既存): work_base/<path> に作られる" \
+    test -d "$_ab_bare_path"
+assert_eq    "bare name (既存): ブランチが <path> と一致 (新規作成エラーにならない)" \
+    "$(git -C "$_ab_bare_path" symbolic-ref --short HEAD 2>/dev/null)" \
+    "hotfix-bare"
+_ab_cd_back
+
+# --- bare name でも auto-detect: どこにも無いブランチは HEAD から新規作成 ---
+cd "$_ab_repo"
+_pwt_cmd_add "brand-new-bare" >/dev/null 2>&1
+_ab_bare2_path="$_ab_repo/.worktrees/brand-new-bare"
+assert_true  "bare name (新規): work_base/<path> に作られる" \
+    test -d "$_ab_bare2_path"
+assert_eq    "bare name (新規): ブランチが HEAD ベースで作成される" \
+    "$(git -C "$_ab_bare2_path" symbolic-ref --short HEAD 2>/dev/null)" \
+    "brand-new-bare"
+_ab_cd_back
+
+# --- 非トリガー: -b 明示時は auto-detect しない (work_base 配下に <path> をパスとして展開) ---
+cd "$_ab_repo"
+_pwt_cmd_add -b "tmp/explicit" "explicit_dir" >/dev/null 2>&1
+_ab_d_path="$_ab_repo/.worktrees/explicit_dir"
+assert_true  "非トリガー: -b 指定時は <path> がバレネームとして解決される" \
+    test -d "$_ab_d_path"
+assert_eq    "非トリガー: -b で指定したブランチがチェックアウトされる" \
+    "$(git -C "$_ab_d_path" symbolic-ref --short HEAD 2>/dev/null)" \
+    "tmp/explicit"
+_ab_cd_back
+
+# --- 非トリガー: ./relative / ../relative はファイルシステムパス扱い ---
+# auto-detect が発火するとブランチ名 ./foo は invalid でエラーになるため、
+# 相対パス明示のときは従来通り cwd 起点でディレクトリを作る挙動にする
+cd "$_ab_repo"
+mkdir -p "$_ab_repo/local"
+_pwt_cmd_add "./local/dot-relative" >/dev/null 2>&1 || true
+assert_true  "非トリガー: ./<path> はファイルシステムパスとして cwd 起点で展開される" \
+    test -d "$_ab_repo/local/dot-relative"
+_ab_cd_back
+
+# --- 非トリガー: <commit-ish> 指定時は auto-detect しない (/ 含み <path> は cwd 起点) ---
+# main ブランチは main repo に checkout 済みのため、HEAD SHA を commit-ish に使う
+cd "$_ab_repo"
+mkdir -p "$_ab_repo/sub"
+_ab_head_sha="$(git -C "$_ab_repo" rev-parse HEAD)"
+_pwt_cmd_add "sub/wt_with_commit" "$_ab_head_sha" >/dev/null 2>&1 || true
+assert_true  "非トリガー: commit-ish 指定時は <path> が cwd 起点で展開される" \
+    test -d "$_ab_repo/sub/wt_with_commit"
+_ab_cd_back
+
+rm -rf "$_ab_root"
+git() { echo ""; return 0; }
+
+echo ""
 echo "=============================="
 echo "テスト結果: ${_PASS} passed, ${_FAIL} failed"
 echo "=============================="

@@ -672,8 +672,19 @@ _pwt_navigate() {
 # add — git worktree add の薄いラッパー
 # 構文: pwt add [-b <new-branch>] [-B <new-branch>] [--detach] [<git worktree add の他フラグ>] <path> [<commit-ish>]
 #
-# pwt 独自の挙動は <path> がバレネーム（/ を含まない）の場合に work_base 配下に
-# 配置する点のみ。それ以外（/ 含み・絶対パス）はそのまま git worktree add に渡す。
+# pwt 独自の挙動:
+#   1. <path> がバレネーム（/ を含まない）の場合は work_base 配下に配置する。
+#      それ以外（/ 含み・絶対パス）はそのまま git worktree add に渡す。
+#   2. <path> が絶対パス / 相対パス明示 (./ ../) のいずれでもなく、
+#      -b/-B/--detach および <commit-ish> がいずれも未指定の場合は
+#      <path> をブランチ名とみなして自動推論する（auto branch mode）:
+#        A) refs/heads/<path> が存在 → そのブランチをチェックアウト
+#        B) refs/remotes/origin/<path> のみ存在 → -b で local を作成し origin 追従
+#        C) どこにも無い → -b で HEAD ベースの新規ブランチを作成
+#      ディレクトリ名は <path> をそのまま使い (work_base/<path>)、ブランチ名と
+#      ディレクトリ構成を一致させる。bare name と / 含みの両方に適用される。
+#      ./foo や ../foo のような相対パス明示はファイルシステムパスとして
+#      そのまま git worktree add に渡される。
 _pwt_cmd_add() {
     local _ctx
     _ctx="$(_pwt_resolve_context)" || return 1
@@ -753,17 +764,6 @@ _pwt_cmd_add() {
         echo "エラー: 余分な引数: $3" >&2
         return 1
     fi
-    if [ -n "$new_branch" ] && [ -n "$reset_branch" ]; then
-        echo "エラー: -b と -B は同時に指定できません" >&2
-        return 1
-    fi
-
-    if [ -n "$new_branch" ]; then
-        _pwt_validate_branch "$new_branch" || return 1
-    fi
-    if [ -n "$reset_branch" ]; then
-        _pwt_validate_branch "$reset_branch" || return 1
-    fi
 
     local path_arg="$1"
     local commit_ish="${2:-}"
@@ -781,8 +781,67 @@ _pwt_cmd_add() {
         return 1
     fi
 
+    # auto branch mode: <path> をブランチ名とみなして work_base/<path> に配置する
+    # 条件: <path> が絶対パス / 相対パス明示 (./ ../) でなく
+    #       commit-ish/-b/-B/--detach がいずれも未指定
+    # bare name (foo) と / 含み (feature/foo) の両方で DWIM (既存 → checkout / 無ければ新規)
+    local auto_branch=false
+    local detach_specified=false
+    if [ "${#passthrough_flags[@]}" -gt 0 ]; then
+        local _f
+        for _f in "${passthrough_flags[@]}"; do
+            case "$_f" in
+                -d|--detach) detach_specified=true; break ;;
+            esac
+        done
+    fi
+
+    # 相対パス明示 (./ ../ . ..) は意図が「ファイルシステムパス」と明らかなため除外
+    if [[ "$path_arg" != /* ]] \
+        && [[ "$path_arg" != ./* ]] \
+        && [[ "$path_arg" != ../* ]] \
+        && [ "$path_arg" != "." ] \
+        && [ "$path_arg" != ".." ] \
+        && [ -z "$commit_ish" ] \
+        && [ -z "$new_branch" ] \
+        && [ -z "$reset_branch" ] \
+        && [ "$detach_specified" = "false" ]
+    then
+        if git -C "$project_root" show-ref --verify --quiet "refs/heads/$path_arg"; then
+            # A) ローカルブランチが存在 → そのまま checkout
+            commit_ish="$path_arg"
+            auto_branch=true
+        elif git -C "$project_root" show-ref --verify --quiet "refs/remotes/origin/$path_arg"; then
+            # B) origin にのみ存在 → 同名 local ブランチを origin 追従で作成
+            new_branch="$path_arg"
+            commit_ish="origin/$path_arg"
+            auto_branch=true
+        else
+            # C) どこにも無い → HEAD ベースで新規ブランチを作成
+            new_branch="$path_arg"
+            auto_branch=true
+        fi
+    fi
+
+    if [ -n "$new_branch" ] && [ -n "$reset_branch" ]; then
+        echo "エラー: -b と -B は同時に指定できません" >&2
+        return 1
+    fi
+
+    if [ -n "$new_branch" ]; then
+        _pwt_validate_branch "$new_branch" || return 1
+    fi
+    if [ -n "$reset_branch" ]; then
+        _pwt_validate_branch "$reset_branch" || return 1
+    fi
+
     local wt_path
-    wt_path="$(_pwt_resolve_add_path "$path_arg" "$work_base" "$project_name" "$use_prefix")" || return 1
+    if [ "$auto_branch" = "true" ]; then
+        # auto branch mode: / を保持して work_base 配下に配置（ブランチ名と一致）
+        wt_path="$(_pwt_wt_path "$work_base" "$project_name" "$use_prefix" "$path_arg")"
+    else
+        wt_path="$(_pwt_resolve_add_path "$path_arg" "$work_base" "$project_name" "$use_prefix")" || return 1
+    fi
     wt_path="${wt_path%/}"
 
     if [ -e "$wt_path" ]; then
@@ -1037,6 +1096,9 @@ _pwt_cmd_help() {
     echo '          <path> [<commit-ish>]                 worktree を作成（移動しない）'
     echo ''
     echo '  <path> 解釈: バレネーム → work_base 配下に配置 / / 含み・絶対パス → そのまま git worktree add'
+    echo '  auto branch mode: <path> が絶対パス・相対パス明示 (./ ../) でなく、-b/-B/--detach および'
+    echo '                    <commit-ish> がいずれも未指定なら、<path> をブランチ名とみなして自動推論する'
+    echo '                    (既存ローカル → checkout / origin のみ → 追従作成 / 無し → HEAD ベースで新規)'
     echo '  pwt list                                      worktree 一覧（明示的）'
     echo '  pwt remove <branch|name|.>                                       worktree を削除（. は現在の worktree / 対象なら main へ移動）'
     echo '  pwt init                                      .worktreelinks を生成'
