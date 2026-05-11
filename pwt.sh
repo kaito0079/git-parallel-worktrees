@@ -490,49 +490,13 @@ _pwt_cmd_list() {
 
     echo "=== $project_name ==="
     local i=0 wt_path branch
-    # 登録済み worktree パスを集める (孤立検出用)
-    local registered_paths=()
     while IFS=$'\t' read -r wt_path branch; do
         [ -z "$wt_path" ] && continue
         local marker=" "
         [ "$current_root" = "$wt_path" ] && marker=">"
         printf " %s%2d  %-45s  (%s)\n" "$marker" "$i" "$wt_path" "$branch"
         i=$((i + 1))
-        registered_paths+=("$wt_path")
     done < <(_pwt_parse_worktrees "$project_root")
-
-    # 孤立ディレクトリの検出: work_base 配下に存在するが git worktree list に登録されていないディレクトリ
-    # use_prefix=true: ${project_name}-- プレフィックス付きディレクトリだけを対象にする
-    # use_prefix=false: work_base 配下（専用ディレクトリ想定）の全ディレクトリを対象にする
-    # 注: zsh の nomatch エラーを避けるため find で列挙する
-    local orphans=()
-    if [ -d "$work_base" ]; then
-        local name_pattern
-        if [ "$use_prefix" = "true" ]; then
-            name_pattern="${project_name}--*"
-        else
-            name_pattern="*"
-        fi
-        local entry rp is_registered
-        while IFS= read -r -d '' entry; do
-            is_registered=false
-            for rp in "${registered_paths[@]}"; do
-                if [ "$rp" = "$entry" ]; then
-                    is_registered=true
-                    break
-                fi
-            done
-            [ "$is_registered" = false ] && orphans+=("$entry")
-        done < <(find "$work_base" -maxdepth 1 -mindepth 1 -type d -name "$name_pattern" -print0 2>/dev/null)
-    fi
-    if [ "${#orphans[@]}" -gt 0 ]; then
-        echo ""
-        echo "[!] git 未登録の孤立ディレクトリがあります:"
-        for entry in "${orphans[@]}"; do
-            echo "      $entry"
-        done
-        echo "    削除するには: rm -rf <path>"
-    fi
 }
 
 # ----------------------------------------------------------------
