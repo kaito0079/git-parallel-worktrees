@@ -1,8 +1,9 @@
 // Package shell はシェル統合 (pwt.sh) のテストだけを持つ。
 //
-// pwt.sh は bash と zsh の両方で読み込まれる。zsh では status や path が
-// 特殊変数であるなど、片方でしか起きない問題があるため、実際に両方の
-// シェルを起動して検証する。
+// pwt.sh は POSIX sh の範囲で書かれている。zsh では status や path が
+// 特殊変数であるなど、特定のシェルでしか起きない問題があるため、
+// 実際に bash / zsh / dash を起動して検証する。
+// 読み込みに source ではなく . を使うのは、source が POSIX に無いため。
 package shell
 
 import (
@@ -80,7 +81,7 @@ func runShell(t *testing.T, shell, bin, dir, script string) string {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(shell, "-c", "source "+shim+"\n"+script)
+	cmd := exec.Command(shell, "-c", ". "+shim+"\n"+script)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -98,7 +99,7 @@ func TestShimChangesDirectory(t *testing.T) {
 	bin := buildBinary(t)
 	root, worktree := setupRepo(t, bin)
 
-	for _, shell := range []string{"bash", "zsh"} {
+	for _, shell := range []string{"bash", "zsh", "dash"} {
 		t.Run(shell, func(t *testing.T) {
 			if _, err := exec.LookPath(shell); err != nil {
 				t.Skipf("%s is not installed", shell)
@@ -117,7 +118,7 @@ func TestShimPassesThroughOtherCommands(t *testing.T) {
 	bin := buildBinary(t)
 	root, worktree := setupRepo(t, bin)
 
-	for _, shell := range []string{"bash", "zsh"} {
+	for _, shell := range []string{"bash", "zsh", "dash"} {
 		t.Run(shell, func(t *testing.T) {
 			if _, err := exec.LookPath(shell); err != nil {
 				t.Skipf("%s is not installed", shell)
@@ -136,7 +137,7 @@ func TestShimPropagatesFailure(t *testing.T) {
 	bin := buildBinary(t)
 	root, _ := setupRepo(t, bin)
 
-	for _, shell := range []string{"bash", "zsh"} {
+	for _, shell := range []string{"bash", "zsh", "dash"} {
 		t.Run(shell, func(t *testing.T) {
 			if _, err := exec.LookPath(shell); err != nil {
 				t.Skipf("%s is not installed", shell)
@@ -146,7 +147,7 @@ func TestShimPropagatesFailure(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cmd := exec.Command(shell, "-c", "source "+shim+"\npwt switch no-such-worktree\necho rc=$?\npwd")
+			cmd := exec.Command(shell, "-c", ". "+shim+"\npwt switch no-such-worktree\necho rc=$?\npwd")
 			cmd.Dir = root
 			cmd.Env = append(os.Environ(),
 				"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),

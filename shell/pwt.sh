@@ -1,4 +1,4 @@
-# pwt shell integration (bash / zsh)
+# pwt shell integration (POSIX sh; verified with bash, zsh and dash)
 #
 # pwt itself is a normal binary and works without this file. Sourcing it
 # only adds the ability to change the shell's current directory, which a
@@ -23,7 +23,8 @@ pwt() {
             ;;
     esac
 
-    # zsh では status / path が特殊変数のため、別名を使う
+    # local は POSIX にないが、dash / ash を含め実用上すべての sh が実装している。
+    # 変数名は zsh の特殊変数 (status / path) を避けて付けている。
     local cd_file rc dest
     cd_file="$(mktemp "${TMPDIR:-/tmp}/pwt-cd.XXXXXX")" || return 1
 
