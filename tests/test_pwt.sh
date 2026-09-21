@@ -304,6 +304,77 @@ rm -rf "$_co_src" "$_co_dest" "$_co_other"
 git() { echo ""; return 0; }
 
 echo ""
+echo "=== _pwt_create_symlinks (copy: 実体スキップ / force 上書き) ==="
+
+_cf_src="$(mktemp -d)"
+_cf_dest="$(mktemp -d)"
+
+mkdir "$_cf_src/vendor"
+echo "new" > "$_cf_src/vendor/autoload.php"
+
+# dest に既存の実ディレクトリ（古い内容）を配置
+mkdir "$_cf_dest/vendor"
+echo "old" > "$_cf_dest/vendor/autoload.php"
+
+cat > "$_cf_dest/.worktreelinks" <<'EOF'
+[copy]
+vendor
+EOF
+
+git() {
+    if [[ "$*" == *"ls-files"* ]]; then
+        printf 'vendor\0'
+        return 0
+    fi
+    echo ""
+}
+
+# force なし: 既存の実体は保持される
+_cf_out="$(_pwt_create_symlinks "$_cf_src" "$_cf_dest")"
+assert_match "force なし: スキップメッセージに -f 案内が含まれる" "$_cf_out" '-f で上書き'
+assert_eq    "force なし: 既存ファイルの内容が変更されない" \
+    "$(cat "$_cf_dest/vendor/autoload.php")" "old"
+
+# force あり: 上書きされる
+_cf_out="$(_pwt_create_symlinks "$_cf_src" "$_cf_dest" "1")"
+assert_match "force あり: 上書きメッセージが出力される" "$_cf_out" '\[上書き\]'
+assert_eq    "force あり: ファイル内容が新しい値に置き換わる" \
+    "$(cat "$_cf_dest/vendor/autoload.php")" "new"
+
+rm -rf "$_cf_src" "$_cf_dest"
+git() { echo ""; return 0; }
+
+echo ""
+echo "=== _pwt_create_symlinks (link は force 対象外) ==="
+
+_lf_src="$(mktemp -d)"
+_lf_dest="$(mktemp -d)"
+
+echo "secret" > "$_lf_src/.env"
+echo "local" > "$_lf_dest/.env"
+
+cat > "$_lf_dest/.worktreelinks" <<'EOF'
+.env
+EOF
+
+git() {
+    if [[ "$*" == *"ls-files"* ]]; then
+        printf '.env\0'
+        return 0
+    fi
+    echo ""
+}
+
+# force=1 でも link 側の実ファイルは破壊されない
+_pwt_create_symlinks "$_lf_src" "$_lf_dest" "1" >/dev/null
+assert_false "force=1 でも link 対象の実ファイルは symlink 化されない" test -L "$_lf_dest/.env"
+assert_eq    "force=1 でも link 対象の実ファイルは保持される" \
+    "$(cat "$_lf_dest/.env")" "local"
+
+rm -rf "$_lf_src" "$_lf_dest"
+git() { echo ""; return 0; }
+
+echo ""
 echo "=== _pwt_resolve_context (pwt.worktreeDir / worktreePrefix) ==="
 
 # git モック: worktree list + config --get を模倣
