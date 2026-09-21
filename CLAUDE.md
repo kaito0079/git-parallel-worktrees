@@ -57,4 +57,11 @@ shell/pwt.sh        シェル統合 (opt-in)
 
 ## リリース
 
-`.goreleaser.yaml` でタグ push からバイナリのビルドと Homebrew tap (`kaito0079/homebrew-tap`) の formula 更新までを行う。
+```bash
+goreleaser release --clean     # バイナリのビルドと GitHub Release の作成
+go run ./tools/formula         # dist/Formula/pwt.rb を生成
+```
+
+生成した formula を tap リポジトリ (`kaito0079/homebrew-tap`) の `Formula/pwt.rb` に置く。
+
+formula の生成を自前で持つ理由: goreleaser の `brews` は非推奨で、後継の `homebrew_casks` は cask のため `shell/pwt.sh` を安定したパスに置けない。`internal/formula` が `dist/checksums.txt` と `dist/metadata.json` から組み立てる。
