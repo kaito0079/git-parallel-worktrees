@@ -108,14 +108,5 @@ func ResolveContext(r gitcmd.Runner, dir string) (Context, error) {
 	}, nil
 }
 
-// EnsureWorkBase は WorkBase を必要に応じて作成する。
-//
-// shell 版は context 解決時に常に mkdir していたため、pwt list のような
-// 参照系コマンドでもディレクトリが作られていた。worktree を作る側から
-// 明示的に呼ぶ形に変えている。
-func EnsureWorkBase(c Context) error {
-	if err := os.MkdirAll(c.WorkBase, 0o755); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", c.WorkBase, err)
-	}
-	return nil
-}
+// ResolveContext はディレクトリを作らない。list のような参照系コマンドで
+// 副作用が出ないようにするため、作成は worktree を作る側が行う。

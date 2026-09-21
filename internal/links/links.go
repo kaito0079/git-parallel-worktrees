@@ -71,7 +71,7 @@ func Parse(r io.Reader) (Patterns, error) {
 // 空行・空白のみの行と、行頭が # の行はパターンとみなさない。
 //
 // 先頭に空白を挟んだ "  # foo" はパターン扱いになる。gitignore 形式では
-// 行頭の空白が意味を持つため、shell 版の挙動をそのまま踏襲している。
+// 行頭の空白が意味を持つため。
 func HasPatterns(lines []string) bool {
 	for _, line := range lines {
 		if strings.TrimSpace(line) == "" {
