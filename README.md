@@ -1,31 +1,63 @@
 # pwt - Git Parallel Worktrees
 
-`git worktree` の薄いラッパーとなるシェルツール。引数体系は `git worktree add` と互換で、加えてバレネームの `<path>` を共通の置き場所に配置する利便性と、`.worktreelinks` によるシンボリックリンク/コピー同期を提供する。
+`git worktree` の薄いラッパー。引数体系は `git worktree add` と互換で、加えてバレネームの `<path>` を共通の置き場所に配置する利便性と、`.worktreelinks` によるシンボリックリンク/コピー同期を提供する。
 
 ## 設計方針
 
 pwt は **pure な git worktree のラッパー** に徹する。CLI 構文・挙動は `git worktree` に合わせ、独自の引数体系（ブランチ名から自動でディレクトリ名を導出する等）は持たない。pwt の付加価値は次の 3 つに限定する:
 
 - バレネームの `<path>` を `work_base` 配下に配置する補助
-- worktree への `cd` 移動 (`pwt switch`)
+- worktree への移動 (`pwt switch` / `pwt path`)
 - `.worktreelinks` を使ったシンボリックリンク/コピー同期 (`pwt sync` / `unsync`)
 
 ## インストール
 
-### 手動インストール
+### Homebrew
 
 ```bash
-cd ~/path/to/pwt
-chmod +x install.sh
-./install.sh
-echo 'source "${XDG_DATA_HOME:-$HOME/.local/share}/pwt/pwt.sh"' >> ~/.zshrc
-source ~/.zshrc
+brew tap kaito0079/tap
+brew install pwt
 ```
 
-### アンインストール
+### go install
 
 ```bash
-./install.sh --uninstall
+go install github.com/kaito0079/git-parallel-worktrees/cmd/pwt@latest
+```
+
+### ソースからビルド
+
+```bash
+git clone https://github.com/kaito0079/git-parallel-worktrees
+cd git-parallel-worktrees
+go build -o pwt ./cmd/pwt
+```
+
+## シェル統合（任意）
+
+**pwt はこの設定なしでも全機能が使える。** 設定すると `pwt switch` でカレントディレクトリを移動できるようになる。
+
+子プロセスは親シェルの作業ディレクトリを変更できないため、`cd` を伴う移動にはシェル関数が必要になる。`shell/pwt.sh` がそれで、`~/.zshrc`（または `~/.bashrc`）に 1 行足すと有効になる。
+
+```bash
+# Homebrew の場合
+echo 'source "$(brew --prefix)/share/pwt/pwt.sh"' >> ~/.zshrc
+
+# 手動配置の場合
+echo 'source /path/to/shell/pwt.sh' >> ~/.zshrc
+```
+
+読み込まない場合は `pwt path` で移動できる:
+
+```bash
+cd "$(pwt path 2)"
+```
+
+### 補完
+
+```bash
+pwt completion zsh  > "${fpath[1]}/_pwt"
+pwt completion bash > /usr/local/etc/bash_completion.d/pwt
 ```
 
 ## 初回セットアップ
@@ -66,6 +98,8 @@ node_modules/
 .docker/
 ```
 
+パターンの解釈は `git ls-files --exclude-from` に委譲している。書式は `.gitignore` と同じで、pwt 側では独自のマッチングを行わない。
+
 ### シンボリックリンク vs コピー
 
 | | シンボリックリンク（デフォルト） | コピー（`[copy]`） |
@@ -83,13 +117,12 @@ node_modules/
 
 ### `pwt sync` の挙動
 
-`pwt sync` はシンボリックリンクのみ再作成する。**`[copy]` でコピーされたファイルは `pwt sync` では削除・再コピーされない**（既に実体が存在するためスキップされる）。
+`pwt sync` は既存のシンボリックリンクをすべて削除してから貼り直す。`[copy]` の対象は、宛先に実ファイル/実ディレクトリがある場合はスキップされる。
 
-コピーを更新したい場合は、手動で削除してから再同期する:
+上書きしたい場合は `-f` を付ける:
 
 ```bash
-rm -rf vendor/
-pwt sync        # → main リポジトリから再コピーされる
+pwt sync -f        # [copy] 対象の実体を削除して再コピーする
 ```
 
 ### ライブラリ更新が必要なとき
@@ -122,15 +155,18 @@ pwt unsync
 | コマンド | 説明 |
 |---------|------|
 | `pwt` | worktree 一覧（番号付き・現在位置マーク） |
-| `pwt switch <番号\|名前>` | worktree に移動 |
+| `pwt list` | worktree 一覧（明示的） |
+| `pwt path <番号\|名前>` | worktree の絶対パスのみを出力 |
+| `pwt switch <番号\|名前>` | worktree に移動（シェル統合が必要） |
 | `pwt switch -c [-b <branch>] [-B <branch>] [--detach] <path> [<commit-ish>]` | worktree を作成して移動 |
 | `pwt add [-b <branch>] [-B <branch>] [--detach] <path> [<commit-ish>]` | worktree を作成（移動しない） |
-| `pwt list` | worktree 一覧（明示的） |
 | `pwt remove <branch\|name\|.>` | worktree を削除（ブランチ名/ディレクトリ名/`.`=カレント） |
 | `pwt init` | `.worktreelinks` を生成 |
-| `pwt sync` | カレント worktree のリンク/コピーを再同期 |
+| `pwt sync [-f]` | カレント worktree のリンク/コピーを再同期 |
 | `pwt unsync` | カレント worktree のシンボリックリンクを全削除 |
-| `pwt help` | ヘルプを表示 |
+| `pwt completion <shell>` | 補完スクリプトを出力 |
+
+`pwt remove` は、対象が部分一致で決まった場合と未コミットの変更がある場合に確認を求める。
 
 ### 使用例
 
@@ -164,7 +200,7 @@ pwt switch -c feature/PROJ-123
 | `refs/remotes/origin/<path>` のみ存在 | 同名 local ブランチを origin 追従で作成 |
 | どこにも無い | HEAD ベースで新規ブランチを作成 |
 
-worktree のディレクトリは `<path>` をそのまま使い (`work_base/<path>`)、ブランチ名と一致する。`pwt switch -c feature/PROJ-123` で「ディレクトリも作業中ブランチも `feature/PROJ-123`」、`pwt switch -c hotfix` で「ディレクトリもブランチも `hotfix`」になる。
+どのケースで解決したかは実行時に 1 行表示される。worktree のディレクトリは `<path>` をそのまま使い (`work_base/<path>`)、ブランチ名と一致する。
 
 明示的にディレクトリとブランチを分けたい場合は `-b` を使う:
 
@@ -184,9 +220,9 @@ pwt switch feature       # ブランチ名の部分一致で移動
 
 ```
 === myapp ===
-  > 0  /repos/myapp                         (main)
-    1  /repos/myapp--review_1               (feature/PROJ-123)
-    2  /repos/myapp--hotfix                 (hotfix)
+  > 0  /repos/myapp                  (main)
+    1  /repos/myapp--review_1        (feature/PROJ-123)
+    2  /repos/myapp--hotfix          (hotfix)
 ```
 
 ## ディレクトリ命名規則
@@ -240,8 +276,24 @@ git config pwt.worktreePrefix repo
 export GIT_PARALLEL_WORKTREES_BASE=/path/to/worktrees
 ```
 
+絶対パスかつ既存のディレクトリである必要がある。
+
 ## 動作要件
 
-- **シェル**: bash 4.0+ / zsh 5.0+
-- **OS**: macOS / Linux (Ubuntu)
+- **OS**: macOS / Linux
 - **依存**: git
+- シェル統合を使う場合: bash / zsh
+
+## 開発
+
+```bash
+go test ./...
+go vet ./...
+gofmt -l .
+```
+
+`internal/links` と `internal/cli` のテストは実際の git を呼ぶ統合テストを含む。
+
+## ライセンス
+
+MIT
