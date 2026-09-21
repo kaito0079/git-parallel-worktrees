@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -83,6 +84,9 @@ func parseAddArgs(args []string) (addArgs, error) {
 			}
 			a.passthrough = append(a.passthrough, "--reason", args[i])
 
+		case arg == "-h", arg == "--help":
+			return a, errHelp
+
 		case addPassthroughFlags[arg]:
 			a.passthrough = append(a.passthrough, arg)
 
@@ -111,8 +115,16 @@ func newAddCommand(e *env) *cobra.Command {
 		// git worktree add 互換の解析を自前で行う
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := runAdd(e, args)
-			return err
+			wtPath, err := runAdd(e, args)
+			if errors.Is(err, errHelp) {
+				return cmd.Help()
+			}
+			if err != nil {
+				return err
+			}
+			// 移動の案内は add のときだけ。switch -c は自分で移動する
+			fmt.Fprintf(e.stdout, "  move:    cd %q\n", wtPath)
+			return nil
 		},
 	}
 }
@@ -219,11 +231,6 @@ func runAdd(e *env, args []string) (string, error) {
 	}
 
 	fmt.Fprintf(e.stdout, "\n  created: %s\n", wtPath)
-	if !e.shellIntegration() {
-		fmt.Fprintf(e.stdout, "  move:    cd %q\n", wtPath)
-	} else {
-		fmt.Fprintf(e.stdout, "  move:    pwt switch %s\n", filepath.Base(wtPath))
-	}
 
 	return wtPath, nil
 }
