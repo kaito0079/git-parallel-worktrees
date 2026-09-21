@@ -1,16 +1,18 @@
 # pwt - Git Parallel Worktrees
 
-`git worktree` の薄いラッパー。引数体系は `git worktree add` と互換で、加えてバレネームの `<path>` を共通の置き場所に配置する利便性と、`.worktreelinks` によるシンボリックリンク/コピー同期を提供する。
+A thin wrapper around `git worktree`. The argument syntax matches `git worktree add`, with two conveniences on top: bare `<path>` names are placed in a shared location, and shared assets are synced into each worktree through `.worktreelinks`.
 
-## 設計方針
+日本語版は [docs/README.ja.md](docs/README.ja.md) にあります。
 
-pwt は **pure な git worktree のラッパー** に徹する。CLI 構文・挙動は `git worktree` に合わせ、独自の引数体系（ブランチ名から自動でディレクトリ名を導出する等）は持たない。pwt の付加価値は次の 3 つに限定する:
+## Design
 
-- バレネームの `<path>` を `work_base` 配下に配置する補助
-- worktree への移動 (`pwt switch` / `pwt path`)
-- `.worktreelinks` を使ったシンボリックリンク/コピー同期 (`pwt sync` / `unsync`)
+pwt stays a **pure wrapper around git worktree**. Its CLI syntax and behavior follow `git worktree`; it does not invent its own argument scheme (deriving a directory name from a branch name, for example). Everything pwt adds is limited to these three things:
 
-## インストール
+- placing a bare `<path>` under a shared work base
+- moving between worktrees (`pwt switch` / `pwt path`)
+- syncing symlinks and copies described by `.worktreelinks` (`pwt sync` / `pwt unsync`)
+
+## Install
 
 ### Homebrew
 
@@ -25,7 +27,7 @@ brew install pwt
 go install github.com/kaito0079/git-parallel-worktrees/cmd/pwt@latest
 ```
 
-### ソースからビルド
+### From source
 
 ```bash
 git clone https://github.com/kaito0079/git-parallel-worktrees
@@ -33,190 +35,196 @@ cd git-parallel-worktrees
 go build -o pwt ./cmd/pwt
 ```
 
-## シェル統合（任意）
+## Shell integration (optional)
 
-**pwt はこの設定なしでも全機能が使える。** 設定すると `pwt switch` でカレントディレクトリを移動できるようになる。
+**Every feature works without this.** Setting it up only adds the ability for `pwt switch` to change your current directory.
 
-子プロセスは親シェルの作業ディレクトリを変更できないため、`cd` を伴う移動にはシェル関数が必要になる。`shell/pwt.sh` がそれで、`~/.zshrc`（または `~/.bashrc`）に 1 行足すと有効になる。
+A child process cannot change its parent shell's working directory, so moving with `cd` needs a shell function. `shell/pwt.sh` is that function; add one line to `~/.zshrc` (or `~/.bashrc`) to enable it.
 
 ```bash
-# Homebrew の場合
-echo 'source "$(brew --prefix)/share/pwt/pwt.sh"' >> ~/.zshrc
+# Homebrew
+echo '. "$(brew --prefix)/share/pwt/pwt.sh"' >> ~/.zshrc
 
-# 手動配置の場合
-echo 'source /path/to/shell/pwt.sh' >> ~/.zshrc
+# Manual install
+echo '. /path/to/shell/pwt.sh' >> ~/.zshrc
 ```
 
-読み込まない場合は `pwt path` で移動できる:
+`.` is the POSIX form; `source` is equivalent in bash and zsh.
+
+Without the shell function, move with `pwt path`:
 
 ```bash
 cd "$(pwt path 2)"
 ```
 
-### 補完
+### Completion
 
 ```bash
 pwt completion zsh  > "${fpath[1]}/_pwt"
 pwt completion bash > /usr/local/etc/bash_completion.d/pwt
 ```
 
-## 初回セットアップ
+## Getting started
 
 ```bash
 cd /path/to/your-project
 
-# 1. .worktreelinks を生成（.gitignore の内容をもとに作成される）
+# 1. Generate .worktreelinks (seeded from your .gitignore)
 pwt init
 
-# 2. リンクしたいパターンのコメントを外す
+# 2. Uncomment the patterns you want linked
 vim .worktreelinks
 
-# 3. 最初の worktree を作成して移動
-#    -b で新規ブランチ、my-task はディレクトリ名（バレネーム）、main は基点
+# 3. Create your first worktree and move into it
+#    -b creates a branch, my-task is the directory name, main is the base
 pwt switch -c -b feature/my-task my-task main
 ```
 
-## ファイル共有（`.worktreelinks`）
+## Sharing files (`.worktreelinks`)
 
-`.worktreelinks` に書いたパターンのファイル/ディレクトリが、main リポジトリからシンボリックリンクまたはコピーされる。
+Files and directories matching the patterns in `.worktreelinks` are symlinked or copied from the main repository into the worktree.
 
 ```
-# .worktreelinks の例
-# デフォルトはシンボリックリンク（一元管理向き）
+# .worktreelinks example
+# Symlinks are the default (good for things you want to keep in one place)
 .env
 .env.*
 docker-compose.override.yml
 .claude/settings.local.json
 
-# [copy] セクション以降はコピー（Docker 等でシンボリックリンクが使えない場合）
+# Entries after [copy] are copied instead (for cases where symlinks
+# do not work, such as inside Docker)
 [copy]
 vendor/
 node_modules/
 
-# [link] で再びシンボリックリンクモードに戻せる
+# [link] switches back to symlink mode
 [link]
 .docker/
 ```
 
-パターンの解釈は `git ls-files --exclude-from` に委譲している。書式は `.gitignore` と同じで、pwt 側では独自のマッチングを行わない。
+Pattern matching is delegated to `git ls-files --exclude-from`. The format is exactly `.gitignore`'s, and pwt does not reimplement any of that matching itself.
 
-### シンボリックリンク vs コピー
+### Symlink vs copy
 
-| | シンボリックリンク（デフォルト） | コピー（`[copy]`） |
+| | Symlink (default) | Copy (`[copy]`) |
 |---|---|---|
-| 用途 | 一元管理したいもの（`.env`） | 独立して動く必要があるもの（`vendor/`） |
-| 速度 | 瞬時 | ファイル数に比例 |
-| 変更の反映 | 即時（実体は1つ） | されない（独立コピー） |
-| Docker | 参照先がコンテナ外で壊れる | 問題なし |
+| Use for | things kept in one place (`.env`) | things that must stand alone (`vendor/`) |
+| Speed | instant | proportional to file count |
+| Sees upstream edits | immediately (single real file) | no (independent copy) |
+| Docker | target breaks outside the container | fine |
 
-### 基本ルール
+### Rules
 
-- `pwt add` で worktree を作成すると自動的にリンク/コピーが設定される
-- **各 worktree は独立した `.worktreelinks` のコピーを持つ** → worktree ごとに個別設定が可能
-- `.worktreelinks` をコミットすればチームで設定を共有できる
+- `pwt add` sets up the links and copies automatically
+- **each worktree gets its own copy of `.worktreelinks`**, so it can be configured individually
+- committing `.worktreelinks` shares the configuration with your team
 
-### `pwt sync` の挙動
+### What `pwt sync` does
 
-`pwt sync` は既存のシンボリックリンクをすべて削除してから貼り直す。`[copy]` の対象は、宛先に実ファイル/実ディレクトリがある場合はスキップされる。
+`pwt sync` removes the existing symlinks that point into the main repository and recreates them. Symlinks that stay inside the worktree are left alone, so symlinks tracked by the repository survive even when the worktree lives inside the repository itself.
 
-上書きしたい場合は `-f` を付ける:
+`[copy]` entries are skipped when a real file or directory is already at the destination. Use `-f` to overwrite:
 
 ```bash
-pwt sync -f        # [copy] 対象の実体を削除して再コピーする
+pwt sync -f        # remove the real file/directory and copy again
 ```
 
-### ライブラリ更新が必要なとき
+### Updating libraries in one worktree
 
-特定の worktree だけライブラリを更新したい場合:
+To update a library in a single worktree only:
 
 ```bash
-# 1. その worktree の .worktreelinks を編集
-vim .worktreelinks      # node_modules をコメントアウト
+# 1. Edit that worktree's .worktreelinks
+vim .worktreelinks      # comment out node_modules
 
-# 2. シンボリックリンクを再生成（node_modules のリンクが外れる）
+# 2. Recreate the symlinks (the node_modules link goes away)
 pwt sync
 
-# 3. このworktreeだけ実体をインストール
+# 3. Install a real copy for this worktree only
 npm install
 
-# 他の worktree は影響なし（シンボリックリンクのまま）
+# Other worktrees are untouched (still symlinked)
 ```
 
-全シンボリックリンクをまとめて外したい場合:
+To drop every symlink at once:
 
 ```bash
 pwt unsync
 ```
 
-## コマンド一覧
+## Commands
 
-`pwt add` は `git worktree add` と同じ引数体系。
+`pwt add` takes the same arguments as `git worktree add`.
 
-| コマンド | 説明 |
-|---------|------|
-| `pwt` | worktree 一覧（番号付き・現在位置マーク） |
-| `pwt list` | worktree 一覧（明示的） |
-| `pwt path <番号\|名前>` | worktree の絶対パスのみを出力 |
-| `pwt switch <番号\|名前>` | worktree に移動（シェル統合が必要） |
-| `pwt switch -c [-b <branch>] [-B <branch>] [--detach] <path> [<commit-ish>]` | worktree を作成して移動 |
-| `pwt add [-b <branch>] [-B <branch>] [--detach] <path> [<commit-ish>]` | worktree を作成（移動しない） |
-| `pwt remove <branch\|name\|.>` | worktree を削除（ブランチ名/ディレクトリ名/`.`=カレント） |
-| `pwt init` | `.worktreelinks` を生成 |
-| `pwt sync [-f]` | カレント worktree のリンク/コピーを再同期 |
-| `pwt unsync` | カレント worktree のシンボリックリンクを全削除 |
-| `pwt completion <shell>` | 補完スクリプトを出力 |
+| Command | Description |
+|---------|-------------|
+| `pwt` | list worktrees (numbered, current one marked) |
+| `pwt list` | list worktrees (explicit) |
+| `pwt path <index\|name>` | print a worktree's absolute path and nothing else |
+| `pwt switch <index\|name>` | move to a worktree (needs shell integration) |
+| `pwt switch -c [-b <branch>] [-B <branch>] [--detach] <path> [<commit-ish>]` | create a worktree and move into it |
+| `pwt add [-b <branch>] [-B <branch>] [--detach] <path> [<commit-ish>]` | create a worktree (without moving) |
+| `pwt remove <branch\|name\|.>` | remove a worktree (branch name, directory name, or `.` for the current one) |
+| `pwt init` | generate `.worktreelinks` |
+| `pwt sync [-f]` | re-sync the current worktree's links and copies |
+| `pwt unsync` | remove the current worktree's symlinks into the main repository |
+| `pwt completion <shell>` | print a completion script |
 
-`pwt remove` は、対象が部分一致で決まった場合と未コミットの変更がある場合に確認を求める。
+`pwt remove` asks for confirmation when the target was resolved by a partial match, and again when the worktree has uncommitted changes.
 
-### 使用例
+Exit codes: `0` success, `1` runtime error, `2` bad arguments.
+
+### Examples
 
 ```bash
-# 新規ブランチ + 任意のディレクトリ名（チケット名のブランチを review_1 などで管理したいとき）
+# New branch with a directory name of your choosing
+# (useful when the branch is named after a ticket)
 pwt add -b feature/PROJ-123 review_1 main
 
-# 既存ブランチをチェックアウト（チェックアウト先のディレクトリ名を指定）
+# Check out an existing branch into a directory you name
 pwt add review_1 feature/PROJ-123
 
-# ディレクトリ名と同名のブランチを新規作成（git worktree のデフォルト挙動）
+# Create a branch named after the directory (git worktree's default)
 pwt add hotfix
 
-# `/` 含みブランチを 1 引数で扱う（auto branch mode）
-# ディレクトリ・ブランチともに feature/PROJ-123 になる
+# Handle a branch containing `/` with a single argument (auto branch mode);
+# both the directory and the branch become feature/PROJ-123
 pwt switch -c feature/PROJ-123
 ```
 
-### `<path>` の解釈
+### How `<path>` is interpreted
 
-- **バレネーム**（`/` を含まない、例: `review_1`）→ `work_base` 配下に配置（`pwt.worktreePrefix` 設定を反映）
-- **`/` を含む or 絶対パス** → そのまま `git worktree add` に渡す
+- **bare name** (no slash, e.g. `review_1`) → placed under the work base, honoring `pwt.worktreePrefix`
+- **contains a slash, or is absolute** → passed to `git worktree add` as-is
 
-### auto branch mode
+### Auto branch mode
 
-`<path>` が絶対パスや相対パス明示 (`./foo`, `../foo`) でなく、`-b` / `-B` / `--detach` および `<commit-ish>` がいずれも未指定のときは、`<path>` をブランチ名として自動推論する (bare name / `/` 含みのどちらでも有効):
+When `<path>` is neither absolute nor an explicit relative path (`./foo`, `../foo`), and none of `-b` / `-B` / `--detach` / `<commit-ish>` is given, `<path>` is also used as the branch name. This works for both bare names and names containing `/`.
 
-| 状態 | 挙動 |
-|------|------|
-| `refs/heads/<path>` が存在 | そのブランチをチェックアウト |
-| `refs/remotes/origin/<path>` のみ存在 | 同名 local ブランチを origin 追従で作成 |
-| どこにも無い | HEAD ベースで新規ブランチを作成 |
+| State | Behavior |
+|-------|----------|
+| `refs/heads/<path>` exists | check that branch out |
+| only `refs/remotes/origin/<path>` exists | create a local branch tracking origin |
+| neither exists | create a new branch from HEAD |
 
-どのケースで解決したかは実行時に 1 行表示される。worktree のディレクトリは `<path>` をそのまま使い (`work_base/<path>`)、ブランチ名と一致する。
+pwt prints one line saying which case applied. The worktree directory uses `<path>` as-is (`work_base/<path>`), matching the branch name.
 
-明示的にディレクトリとブランチを分けたい場合は `-b` を使う:
-
-```bash
-pwt switch -c -b feature/PROJ-123 review_1 main   # ブランチ feature/PROJ-123 / ディレクトリ review_1
-```
-
-## ナビゲーション
+Use `-b` when the directory and the branch should differ:
 
 ```bash
-pwt                      # worktree 一覧（番号付き・現在位置 > マーク）
-pwt switch 2             # 番号で移動
-pwt switch feature       # ブランチ名の部分一致で移動
+pwt switch -c -b feature/PROJ-123 review_1 main   # branch feature/PROJ-123, directory review_1
 ```
 
-表示例:
+## Navigation
+
+```bash
+pwt                      # list worktrees (numbered, current marked with >)
+pwt switch 2             # move by index
+pwt switch feature       # move by partial branch-name match
+```
+
+Example output:
 
 ```
 === myapp ===
@@ -225,66 +233,66 @@ pwt switch feature       # ブランチ名の部分一致で移動
     2  /repos/myapp--hotfix          (hotfix)
 ```
 
-## ディレクトリ命名規則
+## Directory layout
 
-`pwt add <path>` の `<path>` がバレネーム（`/` を含まない）のとき、pwt が `work_base` 配下に配置する。デフォルトでは main リポジトリの隣:
+When `<path>` is a bare name, pwt places the worktree under the work base. By default that is next to the main repository:
 
 ```
-/repos/myapp/                      ← main リポジトリ
+/repos/myapp/                      ← main repository
 /repos/myapp--review_1/            ← worktree (path: review_1)
 /repos/myapp--hotfix/              ← worktree (path: hotfix)
 ```
 
-### 配置先の変更
+### Changing where worktrees go
 
-`pwt.worktreeDir` で worktree の配置先とディレクトリ命名を切り替えられる:
+`pwt.worktreeDir` controls both the location and the directory naming:
 
-| 設定 | 配置例 (`pwt add review_1` のとき) | prefix |
+| Setting | Result for `pwt add review_1` | prefix |
 |---|---|---|
-| 未設定 | `/repos/myapp--review_1/` | `<repo>--<path>` |
+| unset | `/repos/myapp--review_1/` | `<repo>--<path>` |
 | `.worktrees` | `/repos/.worktrees/myapp--review_1/` | `<repo>--<path>` |
-| `./.worktrees` | `/repos/myapp/.worktrees/review_1/` | `<path>` のみ |
+| `./.worktrees` | `/repos/myapp/.worktrees/review_1/` | `<path>` only |
 
 ```bash
-# 親ディレクトリ配下の専用サブディレクトリにまとめる
+# Collect worktrees in a dedicated sibling directory
 git config pwt.worktreeDir .worktrees
 
-# main リポジトリ内に配置する（プロジェクトごとに完結）
+# Keep them inside the main repository (self-contained per project)
 git config pwt.worktreeDir ./.worktrees
 ```
 
-### prefix の明示指定
+### Forcing the prefix
 
-`pwt.worktreePrefix` で `<repo>--` prefix の付与を強制できる:
+`pwt.worktreePrefix` overrides whether the `<repo>--` prefix is applied:
 
-| 値 | 挙動 |
+| Value | Behavior |
 |---|---|
-| `auto` (既定) | 配置先から推論（`./X` なら付けない、それ以外は付ける） |
-| `repo` | 常に `<repo>--<slug>` |
-| `none` | 常に `<slug>` のみ |
+| `auto` (default) | inferred from the location (no prefix for `./X`, prefix otherwise) |
+| `repo` | always `<repo>--<slug>` |
+| `none` | always just `<slug>` |
 
 ```bash
-# main repo 内配置でも <repo>-- を付けたい場合
+# Keep worktrees inside the main repo but still prefix them
 git config pwt.worktreeDir ./.worktrees
 git config pwt.worktreePrefix repo
 # → /repos/myapp/.worktrees/myapp--feature-auth/
 ```
 
-### 環境変数での上書き
+### Environment variable override
 
 ```bash
 export GIT_PARALLEL_WORKTREES_BASE=/path/to/worktrees
 ```
 
-絶対パスかつ既存のディレクトリである必要がある。
+It must be an absolute path to an existing directory.
 
-## 動作要件
+## Requirements
 
 - **OS**: macOS / Linux
-- **依存**: git
-- シェル統合を使う場合: bash / zsh
+- **Requires**: git
+- **Shell integration**: any POSIX-compatible shell. `shell/pwt.sh` uses no bash- or zsh-specific syntax and is tested against bash, zsh and dash.
 
-## 開発
+## Development
 
 ```bash
 go test ./...
@@ -292,15 +300,15 @@ go vet ./...
 gofmt -l .
 ```
 
-リリース:
+Release:
 
 ```bash
-goreleaser release --clean     # バイナリのビルドと GitHub Release の作成
-go run ./tools/formula         # Homebrew formula を生成（dist/Formula/pwt.rb）
+goreleaser release --clean     # build binaries and create the GitHub Release
+go run ./tools/formula         # generate the Homebrew formula (dist/Formula/pwt.rb)
 ```
 
-`internal/links` と `internal/cli` のテストは実際の git を呼ぶ統合テストを含む。
+The tests in `internal/links`, `internal/cli` and `shell` are integration tests that invoke real `git` and real shells.
 
-## ライセンス
+## License
 
 MIT
