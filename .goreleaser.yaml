@@ -41,28 +41,9 @@ changelog:
       - "^test:"
       - "^chore:"
 
-# タグを push すると tap リポジトリの formula まで自動更新される。
-# sha256 を手で差し替える運用が不要になる。
-brews:
-  - name: pwt
-    repository:
-      owner: kaito0079
-      name: homebrew-tap
-    homepage: https://github.com/kaito0079/git-parallel-worktrees
-    description: Thin wrapper around git worktree with shared-asset syncing
-    license: MIT
-    install: |
-      bin.install "pwt"
-      pkgshare.install "shell/pwt.sh"
-      generate_completions_from_executable(bin/"pwt", "completion")
-    caveats: |
-      pwt works as-is. To move between worktrees with `pwt switch`,
-      add this to your ~/.zshrc (or ~/.bashrc):
-
-        source "#{opt_pkgshare}/pwt.sh"
-
-      Without it, move with:
-
-        cd "$(pwt path 2)"
-    test: |
-      system bin/"pwt", "--version"
+# Homebrew formula は tools/formula が生成する。
+# goreleaser の brews は非推奨、後継の homebrew_casks は cask のため
+# shell/pwt.sh を安定したパスに置けない。
+#
+#   goreleaser release --clean
+#   go run ./tools/formula

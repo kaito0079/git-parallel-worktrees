@@ -292,6 +292,13 @@ go vet ./...
 gofmt -l .
 ```
 
+リリース:
+
+```bash
+goreleaser release --clean     # バイナリのビルドと GitHub Release の作成
+go run ./tools/formula         # Homebrew formula を生成（dist/Formula/pwt.rb）
+```
+
 `internal/links` と `internal/cli` のテストは実際の git を呼ぶ統合テストを含む。
 
 ## ライセンス
