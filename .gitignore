@@ -5,3 +5,8 @@
 # Go のテスト成果物
 *.test
 *.out
+
+# 作業用（リポジトリには含めない）
+.claude/
+.docs/
+/DESIGN.md
