@@ -17,7 +17,7 @@
 #   pwt list                                  worktree 一覧（明示的）
 #   pwt remove <branch|name|.>                worktree を削除（. は現在の worktree）
 #   pwt init                                  .worktreelinks を生成
-#   pwt sync                                  シンボリックリンクを再同期
+#   pwt sync [-f|--force]                     シンボリックリンクを再同期（-f で copy 対象の実体を上書き）
 #   pwt unsync                                シンボリックリンクを全削除
 
 # =============================================================================
@@ -344,8 +344,10 @@ _pwt_has_patterns() {
 # git ls-files の結果を走査し、モード（link / copy）に応じてシンボリックリンクまたはコピーを作成
 # $1: モード ("link" or "copy")
 # $2: src_root  $3: dest_root  $4: パターンファイル  $5: count 書き込み先ファイル
+# $6: force ("1" のとき copy モードで実ファイル/ディレクトリを削除して上書き)
 _pwt_process_entries() {
     local mode="$1" src_root="$2" dest_root="$3" pattern_file="$4" count_file="$5"
+    local force="${6:-0}"
     local count=0
 
     while IFS= read -r -d '' raw_entry; do
@@ -379,23 +381,31 @@ _pwt_process_entries() {
             if [ -d "$src" ]; then echo "  [リンク] $entry/"; else echo "  [リンク] $entry"; fi
         else
             # コピーモード: シンボリックリンクが残っていれば削除して上書き
+            local overwritten=0
             if [ -L "$dest" ]; then
                 rm -f "$dest"
             elif [ -e "$dest" ]; then
-                if [ -d "$dest" ]; then
-                    echo "  [スキップ] $entry/ (実ディレクトリが存在します)"
+                if [ "$force" = "1" ]; then
+                    rm -rf "$dest"
+                    overwritten=1
                 else
-                    echo "  [スキップ] $entry (実ファイルが存在します)"
+                    if [ -d "$dest" ]; then
+                        echo "  [スキップ] $entry/ (実ディレクトリが存在します。-f で上書き)"
+                    else
+                        echo "  [スキップ] $entry (実ファイルが存在します。-f で上書き)"
+                    fi
+                    continue
                 fi
-                continue
             fi
             mkdir -p "${dest%/*}"
+            local label="コピー"
+            [ "$overwritten" = "1" ] && label="上書き"
             if [ -d "$src" ]; then
                 cp -RP "$src" "$dest"
-                echo "  [コピー] $entry/"
+                echo "  [$label] $entry/"
             else
                 cp "$src" "$dest"
-                echo "  [コピー] $entry"
+                echo "  [$label] $entry"
             fi
             count=$((count + 1))
         fi
@@ -407,8 +417,10 @@ _pwt_process_entries() {
 
 # .worktreelinks のパターンに従いシンボリックリンク/コピーを作成
 # git ls-files --exclude-from で git 自身にパターンマッチを委譲する
+# $3: force ("1" のとき [copy] エントリで既存の実ファイル/ディレクトリを上書き)
 _pwt_create_symlinks() {
     local src_root="$1" dest_root="$2"
+    local force="${3:-0}"
     local config="$dest_root/.worktreelinks"
 
     if [ ! -f "$config" ]; then
@@ -429,12 +441,12 @@ _pwt_create_symlinks() {
     local link_count=0 copy_count=0
 
     if _pwt_has_patterns "$link_file"; then
-        _pwt_process_entries "link" "$src_root" "$dest_root" "$link_file" "$count_file"
+        _pwt_process_entries "link" "$src_root" "$dest_root" "$link_file" "$count_file" "0"
         link_count=$(cat "$count_file")
     fi
 
     if _pwt_has_patterns "$copy_file"; then
-        _pwt_process_entries "copy" "$src_root" "$dest_root" "$copy_file" "$count_file"
+        _pwt_process_entries "copy" "$src_root" "$dest_root" "$copy_file" "$count_file" "$force"
         copy_count=$(cat "$count_file")
     fi
 
@@ -979,6 +991,16 @@ _pwt_cmd_remove() {
 # ----------------------------------------------------------------
 # sync
 _pwt_cmd_sync() {
+    local force=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -f|--force) force=1; shift ;;
+            --) shift; break ;;
+            -*) echo "エラー: 不明なオプション: $1" >&2; return 1 ;;
+            *)  echo "エラー: 余分な引数: $1" >&2; return 1 ;;
+        esac
+    done
+
     local _ctx
     _ctx="$(_pwt_resolve_context)" || return 1
     local project_root project_name work_base use_prefix
@@ -1003,7 +1025,8 @@ _pwt_cmd_sync() {
     fi
 
     echo "=== シンボリックリンク同期: ${current_root##*/} ==="
-    _pwt_create_symlinks "$project_root" "$current_root"
+    [ "$force" = "1" ] && echo "  (force: [copy] エントリの実ファイル/ディレクトリを上書きします)"
+    _pwt_create_symlinks "$project_root" "$current_root" "$force"
 }
 
 # ----------------------------------------------------------------
@@ -1066,7 +1089,8 @@ _pwt_cmd_help() {
     echo '  pwt list                                      worktree 一覧（明示的）'
     echo '  pwt remove <branch|name|.>                                       worktree を削除（. は現在の worktree / 対象なら main へ移動）'
     echo '  pwt init                                      .worktreelinks を生成'
-    echo '  pwt sync                                      シンボリックリンクを再同期（カレント worktree）'
+    echo '  pwt sync [-f|--force]                         シンボリックリンクを再同期（カレント worktree）'
+    echo '                                                -f: [copy] 対象に実ファイル/ディレクトリがあれば削除して上書き'
     echo '  pwt unsync                                    シンボリックリンクを全削除（カレント worktree）'
     echo '  pwt help                                      このヘルプを表示'
     echo ''
@@ -1141,6 +1165,9 @@ _pwt_completions() {
                         local worktrees=("${(f)$(_pwt_completion_wt_branches "$project_root")}")
                         compadd -- "${worktrees[@]}"
                         ;;
+                    sync)
+                        compadd -- -f --force
+                        ;;
                 esac
                 ;;
         esac
@@ -1176,6 +1203,12 @@ _pwt_completions() {
                         mapfile -t worktrees < <(_pwt_completion_wt_branches "$project_root")
                         COMPREPLY=()
                         for w in "${worktrees[@]}"; do
+                            [[ -z "$cur" || "$w" == "$cur"* ]] && COMPREPLY+=("$w")
+                        done
+                        ;;
+                    sync)
+                        COMPREPLY=()
+                        for w in -f --force; do
                             [[ -z "$cur" || "$w" == "$cur"* ]] && COMPREPLY+=("$w")
                         done
                         ;;
