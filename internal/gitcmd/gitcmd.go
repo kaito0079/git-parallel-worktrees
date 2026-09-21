@@ -1,8 +1,6 @@
 // Package gitcmd は git コマンドの実行を抽象化する。
 //
 // Runner を挟むことで、git を呼ぶロジックをテストから差し替えられる。
-// shell 版は git 関数を文字列マッチで差し替えるモックに頼っており、
-// 引数を変えるとテストが壊れていた。
 package gitcmd
 
 import (

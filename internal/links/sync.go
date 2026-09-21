@@ -50,6 +50,9 @@ func Sync(r gitcmd.Runner, srcRoot, destRoot string, opts Options) (Result, erro
 	if err != nil {
 		return res, err
 	}
+	if opts.Out != nil && res.Cleaned > 0 {
+		fmt.Fprintf(opts.Out, "  removed %d symlink(s)\n", res.Cleaned)
+	}
 
 	if HasPatterns(pat.Link) {
 		n, err := processEntries(r, ModeLink, srcRoot, destRoot, pat.Link, false, opts.Out)
@@ -72,8 +75,8 @@ func Sync(r gitcmd.Runner, srcRoot, destRoot string, opts Options) (Result, erro
 // CleanSymlinks は destRoot 以下のシンボリックリンクのうち、srcRoot 配下を
 // 指すものを削除する。他の場所を指すリンクは残す。
 //
-// shell 版は find -maxdepth 20 で深さを制限していたが、WalkDir は
-// シンボリックリンクを辿らないため深さ制限は不要。
+// WalkDir はシンボリックリンクを辿らないため、リンクされたディレクトリの
+// 中に降りていくことはない。
 func CleanSymlinks(srcRoot, destRoot string) (int, error) {
 	srcRoot = strings.TrimSuffix(srcRoot, "/")
 	count := 0

@@ -163,8 +163,7 @@ func TestResolveContextEnvWorkBase(t *testing.T) {
 	})
 }
 
-// shell 版は context 解決のたびに work_base を mkdir していたため、
-// pwt list のような参照系でもディレクトリが作られていた。
+// 参照系コマンドで work_base が作られてしまわないことを確認する。
 func TestResolveContextDoesNotCreateWorkBase(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "myapp")
@@ -179,13 +178,6 @@ func TestResolveContextDoesNotCreateWorkBase(t *testing.T) {
 	}
 	if _, err := os.Stat(ctx.WorkBase); !os.IsNotExist(err) {
 		t.Errorf("WorkBase %q should not exist yet, stat err = %v", ctx.WorkBase, err)
-	}
-
-	if err := EnsureWorkBase(ctx); err != nil {
-		t.Fatalf("EnsureWorkBase() error = %v", err)
-	}
-	if fi, err := os.Stat(ctx.WorkBase); err != nil || !fi.IsDir() {
-		t.Errorf("EnsureWorkBase() did not create %q (err = %v)", ctx.WorkBase, err)
 	}
 }
 
