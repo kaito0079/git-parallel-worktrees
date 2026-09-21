@@ -1,0 +1,68 @@
+version: 2
+
+project_name: pwt
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: pwt
+    main: ./cmd/pwt
+    binary: pwt
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - shell/pwt.sh
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+# タグを push すると tap リポジトリの formula まで自動更新される。
+# sha256 を手で差し替える運用が不要になる。
+brews:
+  - name: pwt
+    repository:
+      owner: kaito0079
+      name: homebrew-tap
+    homepage: https://github.com/kaito0079/git-parallel-worktrees
+    description: Thin wrapper around git worktree with shared-asset syncing
+    license: MIT
+    install: |
+      bin.install "pwt"
+      pkgshare.install "shell/pwt.sh"
+      generate_completions_from_executable(bin/"pwt", "completion")
+    caveats: |
+      pwt works as-is. To move between worktrees with `pwt switch`,
+      add this to your ~/.zshrc (or ~/.bashrc):
+
+        source "#{opt_pkgshare}/pwt.sh"
+
+      Without it, move with:
+
+        cd "$(pwt path 2)"
+    test: |
+      system bin/"pwt", "--version"

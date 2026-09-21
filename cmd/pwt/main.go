@@ -11,6 +11,9 @@ import (
 	"github.com/kaito0079/git-parallel-worktrees/internal/cli"
 )
 
+// version はリリースビルド時に ldflags で差し込む。
+var version = "dev"
+
 func main() {
-	os.Exit(cli.Main(os.Args[1:]))
+	os.Exit(cli.Main(version, os.Args[1:]))
 }

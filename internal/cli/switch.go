@@ -57,7 +57,7 @@ func moveTo(e *env, path string) error {
 	if !e.shellIntegration() {
 		return fmt.Errorf("shell integration is not enabled, so pwt cannot change the directory\n"+
 			"  move with:  cd %q\n"+
-			"  or enable the pwt shell function (see README)", path)
+			"  to enable:  source pwt.sh from your shell rc (see the README)", path)
 	}
 	return e.requestCD(path)
 }

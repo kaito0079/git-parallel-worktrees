@@ -38,29 +38,31 @@ func usagef(format string, a ...any) error {
 
 // env は 1 回の実行で共有する依存。テストから差し替える。
 type env struct {
-	git    gitcmd.Runner
-	stdout io.Writer
-	stderr io.Writer
-	stdin  io.Reader
-	cwd    string
+	version string
+	git     gitcmd.Runner
+	stdout  io.Writer
+	stderr  io.Writer
+	stdin   io.Reader
+	cwd     string
 	// cdFile が空ならシェル統合なし（cd を要求できない）。
 	cdFile string
 }
 
 // Main は os の状態から env を組み立ててコマンドを実行し、終了コードを返す。
-func Main(args []string) int {
+func Main(version string, args []string) int {
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return ExitError
 	}
 	return Run(&env{
-		git:    gitcmd.Exec{},
-		stdout: os.Stdout,
-		stderr: os.Stderr,
-		stdin:  os.Stdin,
-		cwd:    cwd,
-		cdFile: os.Getenv(EnvCDFile),
+		version: version,
+		git:     gitcmd.Exec{},
+		stdout:  os.Stdout,
+		stderr:  os.Stderr,
+		stdin:   os.Stdin,
+		cwd:     cwd,
+		cdFile:  os.Getenv(EnvCDFile),
 	}, args)
 }
 
@@ -90,8 +92,9 @@ func Run(e *env, args []string) int {
 
 func newRootCommand(e *env) *cobra.Command {
 	root := &cobra.Command{
-		Use:   "pwt",
-		Short: "Manage git worktrees in parallel",
+		Use:     "pwt",
+		Version: e.version,
+		Short:   "Manage git worktrees in parallel",
 		Long: "pwt is a thin wrapper around git worktree.\n\n" +
 			"It places worktrees in a shared location, syncs shared assets\n" +
 			"(node_modules, .env, ...) via .worktreelinks, and can move between\n" +
