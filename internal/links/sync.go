@@ -75,10 +75,15 @@ func Sync(r gitcmd.Runner, srcRoot, destRoot string, opts Options) (Result, erro
 // CleanSymlinks は destRoot 以下のシンボリックリンクのうち、srcRoot 配下を
 // 指すものを削除する。他の場所を指すリンクは残す。
 //
+// destRoot の中で完結するリンクは残す。worktree を srcRoot の内側に置く
+// 構成 (pwt.worktreeDir=./.worktrees) では destRoot 自体が srcRoot 配下に
+// なるため、これが無いとリポジトリが追跡しているリンクまで消える。
+//
 // WalkDir はシンボリックリンクを辿らないため、リンクされたディレクトリの
 // 中に降りていくことはない。
 func CleanSymlinks(srcRoot, destRoot string) (int, error) {
 	srcRoot = strings.TrimSuffix(srcRoot, "/")
+	destRoot = strings.TrimSuffix(destRoot, "/")
 	count := 0
 
 	err := filepath.WalkDir(destRoot, func(p string, d fs.DirEntry, err error) error {
@@ -100,11 +105,16 @@ func CleanSymlinks(srcRoot, destRoot string) (int, error) {
 		if rerr != nil {
 			return nil
 		}
+		// 絶対パスでも /a/../b の形で入っていることがあるので必ず正規化する
 		resolved := target
-		if !filepath.IsAbs(target) {
-			resolved = filepath.Clean(filepath.Join(filepath.Dir(p), target))
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(filepath.Dir(p), resolved)
 		}
-		if resolved == srcRoot || strings.HasPrefix(resolved, srcRoot+"/") {
+		resolved = filepath.Clean(resolved)
+		if under(resolved, destRoot) {
+			return nil
+		}
+		if under(resolved, srcRoot) {
 			if err := os.Remove(p); err != nil {
 				return err
 			}
@@ -114,6 +124,11 @@ func CleanSymlinks(srcRoot, destRoot string) (int, error) {
 	})
 
 	return count, err
+}
+
+// under は p が root そのものか root 配下かを返す。
+func under(p, root string) bool {
+	return p == root || strings.HasPrefix(p, root+"/")
 }
 
 // processEntries は git ls-files が列挙したエントリを 1 件ずつ処理する。
