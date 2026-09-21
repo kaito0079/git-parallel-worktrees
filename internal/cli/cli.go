@@ -26,6 +26,11 @@ const (
 	ExitUsage = 2
 )
 
+// errHelp は引数の中にヘルプ要求があったことを表す。DisableFlagParsing の
+// コマンドでは cobra がヘルプフラグを解釈しないため、引数を読む側が
+// これを返し、コマンド側で cmd.Help() に振り分ける。
+var errHelp = errors.New("help requested")
+
 // usageError は引数の使い方の誤りを表す。終了コードを 2 に分けるために使う。
 type usageError struct{ err error }
 
@@ -42,8 +47,10 @@ type env struct {
 	git     gitcmd.Runner
 	stdout  io.Writer
 	stderr  io.Writer
-	stdin   io.Reader
-	cwd     string
+	// stdin はバッファ済みで持つ。1 回の実行で複数回確認することがあり、
+	// confirm のたびに包み直すと前回バッファに読み込んだ残りを捨ててしまう。
+	stdin *bufio.Reader
+	cwd   string
 	// cdFile が空ならシェル統合なし（cd を要求できない）。
 	cdFile string
 }
@@ -60,7 +67,7 @@ func Main(version string, args []string) int {
 		git:     gitcmd.Exec{},
 		stdout:  os.Stdout,
 		stderr:  os.Stderr,
-		stdin:   os.Stdin,
+		stdin:   bufio.NewReader(os.Stdin),
 		cwd:     cwd,
 		cdFile:  os.Getenv(EnvCDFile),
 	}, args)
@@ -160,7 +167,7 @@ func (e *env) requestCD(path string) error {
 // confirm は y/N の確認を取る。空入力・EOF は「いいえ」とみなす。
 func (e *env) confirm(prompt string) bool {
 	fmt.Fprintf(e.stdout, "%s [y/N] ", prompt)
-	line, err := bufio.NewReader(e.stdin).ReadString('\n')
+	line, err := e.stdin.ReadString('\n')
 	if err != nil && line == "" {
 		fmt.Fprintln(e.stdout)
 		return false

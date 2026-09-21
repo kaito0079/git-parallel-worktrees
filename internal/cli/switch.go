@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -15,18 +16,29 @@ func newSwitchCommand(e *env) *cobra.Command {
 		Short: "Move to a worktree (requires shell integration)",
 		Long: "Move to a worktree.\n\n" +
 			"With -c, the remaining arguments are passed to `pwt add` and the\n" +
-			"newly created worktree becomes the destination.\n\n" +
+			"newly created worktree becomes the destination; run `pwt add --help`\n" +
+			"for that argument syntax.\n\n" +
 			"Changing the shell's directory requires the pwt shell function.\n" +
 			"Without it, use `cd \"$(pwt path <target>)\"` instead.",
 		// -c 以降は pwt add の引数をそのまま受け取る
 		DisableFlagParsing: true,
-		RunE:               func(cmd *cobra.Command, args []string) error { return runSwitch(e, args) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			err := runSwitch(e, args)
+			if errors.Is(err, errHelp) {
+				return cmd.Help()
+			}
+			return err
+		},
 	}
 }
 
 func runSwitch(e *env, args []string) error {
 	if len(args) == 0 {
 		return usagef("%s", switchUsage)
+	}
+
+	if args[0] == "-h" || args[0] == "--help" {
+		return errHelp
 	}
 
 	if args[0] == "-c" {

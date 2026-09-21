@@ -45,8 +45,9 @@ func runRemove(e *env, target string) error {
 		return fmt.Errorf("worktree directory does not exist: %s", wtPath)
 	}
 
-	if current == wtPath {
-		if err := leaveCurrentWorktree(e, ctx); err != nil {
+	removingCurrent := current == wtPath
+	if removingCurrent {
+		if err := confirmRemovingCurrent(e); err != nil {
 			return err
 		}
 	}
@@ -64,6 +65,18 @@ func runRemove(e *env, target string) error {
 
 	if err := e.git.Run(ctx.ProjectRoot, gitArgs...); err != nil {
 		return fmt.Errorf("failed to remove worktree %s: %w\n  remove it manually: rm -rf %q", wtPath, err, wtPath)
+	}
+
+	// 退避の依頼は削除に成功してから。中止・失敗のときに worktree は
+	// 残ったままシェルだけ動いてしまうのを防ぐ。
+	// 受け渡しに失敗しても削除は済んでいるので、警告に留めて成功として扱う。
+	if removingCurrent && e.shellIntegration() {
+		if err := e.requestCD(ctx.ProjectRoot); err != nil {
+			fmt.Fprintf(e.stdout, "  [!] could not tell the shell where to go: %v\n", err)
+			fmt.Fprintf(e.stdout, "      move with: cd %q\n", ctx.ProjectRoot)
+		} else {
+			fmt.Fprintln(e.stdout, "  the current worktree was removed; moved to the main repository")
+		}
 	}
 
 	fmt.Fprintf(e.stdout, "removed: %s\n", wtPath)
@@ -102,11 +115,11 @@ func removeTarget(e *env, ctx repo.Context, current, target string) (string, err
 	return m.wt.Path, nil
 }
 
-// leaveCurrentWorktree は削除対象がカレント worktree のときの退避を行う。
-func leaveCurrentWorktree(e *env, ctx repo.Context) error {
+// confirmRemovingCurrent はカレント worktree を消してよいかを確認する。
+// シェル統合があれば削除後にメインリポジトリへ退避できるので確認は要らない。
+func confirmRemovingCurrent(e *env) error {
 	if e.shellIntegration() {
-		fmt.Fprintln(e.stdout, "  current worktree is the target; moving to the main repository")
-		return e.requestCD(ctx.ProjectRoot)
+		return nil
 	}
 
 	fmt.Fprintln(e.stdout, "  warning: you are inside the worktree being removed")

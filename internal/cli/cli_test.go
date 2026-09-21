@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"os"
 	"os/exec"
@@ -93,7 +94,7 @@ func newTestEnv(t *testing.T, cwd string) (*env, *bytes.Buffer) {
 		git:    gitcmd.Exec{Stdout: &out, Stderr: &out},
 		stdout: &out,
 		stderr: &out,
-		stdin:  strings.NewReader(""),
+		stdin:  bufio.NewReader(strings.NewReader("")),
 		cwd:    cwd,
 	}, &out
 }
@@ -385,5 +386,158 @@ func TestSyncRequiresWorktree(t *testing.T) {
 
 	if err := runSync(e, false); err == nil {
 		t.Error("runSync() error = nil, want error in the main repository")
+	}
+}
+
+// DisableFlagParsing のコマンドでは cobra が -h / --help を解釈しないため、
+// 自前で拾えているかを確かめる。
+func TestHelpFlagOnDisableFlagParsingCommands(t *testing.T) {
+	root := setupRepo(t)
+
+	for _, args := range [][]string{
+		{"add", "--help"},
+		{"add", "-h"},
+		{"switch", "--help"},
+		{"switch", "-h"},
+	} {
+		e, out := newTestEnv(t, root)
+		if code := Run(e, args); code != ExitOK {
+			t.Errorf("Run(%v) = %d, want %d\n%s", args, code, ExitOK, out.String())
+		}
+		if !strings.Contains(out.String(), "Usage:") {
+			t.Errorf("Run(%v) should print the help text, got:\n%s", args, out.String())
+		}
+	}
+}
+
+// -- の後ろ、およびフラグの値として渡された -h / --help はヘルプ要求ではない。
+// 引数の誤りとして扱い、ヘルプを出して 0 で終わってはいけない。
+func TestHelpFlagIsNotTakenFromFlagValues(t *testing.T) {
+	root := setupRepo(t)
+
+	for _, args := range [][]string{
+		{"add", "--", "--help"},
+		{"add", "-b", "-h", "review_1"},
+		{"add", "-B", "--help", "review_1"},
+	} {
+		e, out := newTestEnv(t, root)
+		if code := Run(e, args); code == ExitOK {
+			t.Errorf("Run(%v) = %d, want a non-zero exit\n%s", args, code, out.String())
+		}
+		if strings.Contains(out.String(), "Auto branch mode:") {
+			t.Errorf("Run(%v) should not print the help text, got:\n%s", args, out.String())
+		}
+	}
+}
+
+// 確認は 1 回の実行で 2 回出ることがある。stdin をバッファごと
+// 作り直すと 2 回目が読めなくなる。
+func TestRemoveReadsBothPromptsFromPipedStdin(t *testing.T) {
+	root := setupRepo(t)
+	e, out := newTestEnv(t, root)
+
+	wtPath, err := runAdd(e, []string{"review_1"})
+	if err != nil {
+		t.Fatalf("runAdd() error = %v\n%s", err, out.String())
+	}
+	if err := os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.stdin = bufio.NewReader(strings.NewReader("y\ny\n"))
+	out.Reset()
+
+	// "review" は部分一致で 1 回目、未コミットの変更で 2 回目
+	if err := runRemove(e, "review"); err != nil {
+		t.Fatalf("runRemove() error = %v\n%s", err, out.String())
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("worktree should have been removed, stat err = %v", err)
+	}
+}
+
+// 中止したときに shim へ移動を依頼してはいけない。worktree は残るので、
+// シェルだけ動くと居場所と状態がずれる。
+func TestRemoveCancelledDoesNotRequestCD(t *testing.T) {
+	root := setupRepo(t)
+	e, out := newTestEnv(t, root)
+	cdFile := filepath.Join(t.TempDir(), "cd")
+	e.cdFile = cdFile
+
+	wtPath, err := runAdd(e, []string{"review_1"})
+	if err != nil {
+		t.Fatalf("runAdd() error = %v\n%s", err, out.String())
+	}
+	if err := os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// カレントを削除対象の worktree にする
+	e.cwd = wtPath
+	out.Reset()
+
+	// 空の stdin は「いいえ」とみなされる
+	err = runRemove(e, ".")
+	if err == nil || !strings.Contains(err.Error(), "cancelled") {
+		t.Fatalf("runRemove() error = %v, want cancelled", err)
+	}
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Errorf("worktree should still exist after cancelling: %v", err)
+	}
+	if _, err := os.Stat(cdFile); !os.IsNotExist(err) {
+		t.Error("cd file should not be written when the removal is cancelled")
+	}
+}
+
+// 削除に成功したときだけ、メインリポジトリへの退避を shim に依頼する。
+func TestRemoveCurrentRequestsCDAfterSuccess(t *testing.T) {
+	root := setupRepo(t)
+	e, out := newTestEnv(t, root)
+	cdFile := filepath.Join(t.TempDir(), "cd")
+	e.cdFile = cdFile
+
+	wtPath, err := runAdd(e, []string{"review_1"})
+	if err != nil {
+		t.Fatalf("runAdd() error = %v\n%s", err, out.String())
+	}
+	e.cwd = wtPath
+	out.Reset()
+
+	if err := runRemove(e, "."); err != nil {
+		t.Fatalf("runRemove() error = %v\n%s", err, out.String())
+	}
+	got, err := os.ReadFile(cdFile)
+	if err != nil {
+		t.Fatalf("reading cd file: %v", err)
+	}
+	if string(got) != root {
+		t.Errorf("cd file = %q, want %q", got, root)
+	}
+}
+
+// cd の受け渡しに失敗しても、削除自体は成功として報告する。
+// 失敗扱いにすると worktree は消えているのにエラーだけが見える。
+func TestRemoveReportsSuccessWhenCDFileIsUnwritable(t *testing.T) {
+	root := setupRepo(t)
+	e, out := newTestEnv(t, root)
+	// ディレクトリを指す cdFile は書き込みに失敗する
+	e.cdFile = t.TempDir()
+
+	wtPath, err := runAdd(e, []string{"review_1"})
+	if err != nil {
+		t.Fatalf("runAdd() error = %v\n%s", err, out.String())
+	}
+	e.cwd = wtPath
+	out.Reset()
+
+	if err := runRemove(e, "."); err != nil {
+		t.Fatalf("runRemove() error = %v\n%s", err, out.String())
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("worktree should have been removed, stat err = %v", err)
+	}
+	if !strings.Contains(out.String(), "removed:") {
+		t.Errorf("output should report the removal, got:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "could not tell the shell") {
+		t.Errorf("output should warn about the failed hand-off, got:\n%s", out.String())
 	}
 }
