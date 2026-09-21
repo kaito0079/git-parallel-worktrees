@@ -164,7 +164,7 @@ class Pwt < Formula
       pwt works as-is. To move between worktrees with ` + "`pwt switch`" + `,
       add this to your ~/.zshrc (or ~/.bashrc):
 
-        source "#{opt_pkgshare}/pwt.sh"
+        . "#{opt_pkgshare}/pwt.sh"
 
       Without it, move with:
 

@@ -91,6 +91,15 @@ func TestRender(t *testing.T) {
 			t.Errorf("formula should contain %q", want)
 		}
 	}
+
+	// caveats の読み込みは POSIX の . を使う。pwt.sh は特定シェルに依存せず、
+	// source は bash / zsh の拡張で dash などでは使えない
+	if !strings.Contains(got, `. "#{opt_pkgshare}/pwt.sh"`) {
+		t.Errorf("caveats should source the shim with the POSIX dot, got:\n%s", got)
+	}
+	if strings.Contains(got, `source "#{opt_pkgshare}`) {
+		t.Errorf("caveats should not use the non-POSIX source builtin, got:\n%s", got)
+	}
 }
 
 func TestRenderRequiresAllPlatforms(t *testing.T) {
