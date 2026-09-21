@@ -17,7 +17,8 @@ func newSyncCommand(e *env) *cobra.Command {
 		Use:   "sync",
 		Short: "Re-create symlinks and copies from .worktreelinks",
 		Long: "Re-create the symlinks and copies described by .worktreelinks.\n\n" +
-			"Existing symlinks pointing into the main repository are removed first.\n" +
+			"Existing symlinks pointing into the main repository are removed first;\n" +
+			"symlinks that stay inside the worktree are left alone.\n" +
 			"[copy] entries are skipped when a real file or directory is already\n" +
 			"there; -f removes it and copies again.",
 		Args: cobra.NoArgs,
@@ -50,9 +51,13 @@ func runSync(e *env, force bool) error {
 func newUnsyncCommand(e *env) *cobra.Command {
 	return &cobra.Command{
 		Use:   "unsync",
-		Short: "Remove all symlinks pointing into the main repository",
-		Args:  cobra.NoArgs,
-		RunE:  func(cmd *cobra.Command, args []string) error { return runUnsync(e) },
+		Short: "Remove the symlinks pointing into the main repository",
+		Long: "Remove the symlinks pointing into the main repository.\n\n" +
+			"Symlinks that stay inside the worktree are left alone, so symlinks\n" +
+			"tracked by the repository survive even when the worktree lives\n" +
+			"inside the repository itself.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error { return runUnsync(e) },
 	}
 }
 

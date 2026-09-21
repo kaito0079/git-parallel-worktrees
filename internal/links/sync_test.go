@@ -269,3 +269,69 @@ func TestCleanSymlinksRelativeTarget(t *testing.T) {
 		t.Errorf("count = %d, want 1", count)
 	}
 }
+
+// worktree を src の内側に置く構成 (pwt.worktreeDir=./.worktrees) では
+// dest も src 配下になる。dest の中で完結するリンクまで消してはいけない。
+func TestCleanSymlinksKeepsLinksInsideDest(t *testing.T) {
+	src := t.TempDir()
+	dest := filepath.Join(src, ".worktrees", "feat")
+
+	writeFile(t, filepath.Join(src, "shared"), "content")
+	writeFile(t, filepath.Join(dest, "pkg", "real.txt"), "content")
+
+	// リポジトリが追跡している、worktree 内で完結するリンク
+	inside := filepath.Join(dest, "pkg", "alias.txt")
+	if err := os.Symlink("real.txt", inside); err != nil {
+		t.Fatal(err)
+	}
+	// pwt が張った src 配下へのリンク
+	outside := filepath.Join(dest, "shared")
+	if err := os.Symlink(filepath.Join(src, "shared"), outside); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := CleanSymlinks(src, dest)
+	if err != nil {
+		t.Fatalf("CleanSymlinks() error = %v", err)
+	}
+
+	if !isSymlink(t, inside) {
+		t.Error("a symlink contained in dest should remain")
+	}
+	if _, err := os.Lstat(outside); !os.IsNotExist(err) {
+		t.Error("a symlink pointing into src should have been removed")
+	}
+	if count != 1 {
+		t.Errorf("count = %d, want 1", count)
+	}
+}
+
+// 絶対パスのリンク先も正規化してから src 配下かを判定する。
+func TestCleanSymlinksNormalizesAbsoluteTarget(t *testing.T) {
+	base := t.TempDir()
+	src := filepath.Join(base, "src")
+	dest := filepath.Join(base, "dest")
+
+	writeFile(t, filepath.Join(src, "shared"), "content")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// <base>/other/../src/shared は <base>/src/shared を指す
+	messy := filepath.Join(base, "other", "..", "src", "shared")
+	link := filepath.Join(dest, "shared")
+	if err := os.Symlink(messy, link); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := CleanSymlinks(src, dest)
+	if err != nil {
+		t.Fatalf("CleanSymlinks() error = %v", err)
+	}
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Error("an unnormalized absolute target pointing into src should have been removed")
+	}
+	if count != 1 {
+		t.Errorf("count = %d, want 1", count)
+	}
+}
